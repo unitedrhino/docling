@@ -180,6 +180,18 @@ doc, err := docling.ParsePDFWithOptions(data, docling.PDFOptions{
 
 组件对钩子返回值做强校验(标签、置信度、bbox、表格拓扑、防拒答/防复读),无效结果自动重试一次;有效结果与规则文本按几何去重合并,失败则保留纯 Go 结果——**模型增强永远不破坏既有输出**。
 
+### PDF 安全边界
+
+`ParsePDF` 和 `ParseByExt` 默认拒绝超过 50 MiB 或 2000 页的 PDF，并在文本解析前使用 pdfcpu 对对象、XRef、压缩流、图片和递归深度做有界校验。结构超限返回可通过 `errors.Is(err, docling.ErrPDFResourceLimit)` 判断的错误；单张损坏或超限图片只会被跳过，不影响正文。
+
+```go
+doc, err := docling.ParsePDFWithOptions(data, docling.PDFOptions{
+    Limits: docling.PDFLimits{MaxFileBytes: 100 << 20, MaxPages: 5000},
+})
+```
+
+未设置或设置为非正值时使用 `DefaultPDFLimits()`，不会关闭限制。OCR 与视觉钩子可优先读取请求中的 `PageData`（安全抽取的单页 PDF），并保留 `Data` 作为原文件兼容字段。
+
 ## 命令行工具(CLI)
 
 不想写代码?开箱即用的 `docling` 命令(同为纯 Go 单二进制):

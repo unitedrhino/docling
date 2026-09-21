@@ -91,7 +91,7 @@ func TestCollectPDFCPUPageImagesIsolatesMalformedPage(t *testing.T) {
 			return nil, errors.New("invalid image mask")
 		}
 		return map[int]pdfcpumodel.Image{
-			pageNo: {Reader: strings.NewReader("raw"), Name: fmt.Sprintf("Im%d", pageNo), FileType: "png", PageNr: pageNo},
+			pageNo: {Reader: bytes.NewReader(minimalPNG), Name: fmt.Sprintf("Im%d", pageNo), FileType: "png", PageNr: pageNo},
 		}, nil
 	}, nil)
 	if fmt.Sprint(called) != "[1 2 3]" || len(images[0]) != 1 || len(images[1]) != 0 || len(images[2]) != 1 {
@@ -1353,6 +1353,24 @@ func TestParsePDFExtractsEmbeddedJPEGPicture(t *testing.T) {
 		t.Fatalf("mixed reading order=%+v", doc.Body.Children)
 	}
 	validateDocumentWithDoclingCore110ForTest(t, "pdf-embedded-jpeg", doc)
+}
+
+// TestParsePDFSkipsCorruptImageAndKeepsText 验证单张图片损坏只跳过图片，
+// 同页文本层仍正常进入结构化结果。
+func TestParsePDFSkipsCorruptImageAndKeepsText(t *testing.T) {
+	data := buildPDFJPEGImageFixture(t, "300 0 0 200 100 300", true)
+	jpegStart := bytes.Index(data, []byte{0xff, 0xd8, 0xff})
+	if jpegStart < 0 {
+		t.Fatal("fixture JPEG start not found")
+	}
+	data[jpegStart], data[jpegStart+1], data[jpegStart+2] = 0, 0, 0
+	doc, err := ParsePDFWithOptions(data, PDFOptions{DisablePopplerFallback: true})
+	if err != nil {
+		t.Fatalf("corrupt image must not fail text parsing: %v", err)
+	}
+	if !strings.Contains(doc.Text(), "normal text layer") || len(doc.Pictures) != 0 {
+		t.Fatalf("corrupt image result text=%q pictures=%d", doc.Text(), len(doc.Pictures))
+	}
 }
 
 // TestSafePDFImagePagesRejectsOversizedResources 验证超大声明维度只保留

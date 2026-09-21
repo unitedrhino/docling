@@ -284,6 +284,9 @@ func TestParseByExtForwardsPDFVisualOptions(t *testing.T) {
 			if request.Filename != "标准.pdf" {
 				t.Fatalf("filename=%q", request.Filename)
 			}
+			if len(request.PageData) == 0 {
+				t.Fatal("visual request should contain an extracted single-page PDF")
+			}
 			return PDFVisualResult{Items: []PDFVisualItem{{Label: LabelText, Text: "新正文", Confidence: 1, BBox: &DoclingBBox{L: 60, B: 700, R: 180, T: 740}}}}, nil
 		},
 	})

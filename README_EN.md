@@ -194,6 +194,23 @@ Hook results are strictly validated (labels, confidence, bboxes, table topology,
 anti-repetition) with one automatic retry; valid objects are merged with rule text by geometry and
 failures keep the pure-Go result — **model enhancement never breaks existing output**.
 
+### PDF safety limits
+
+`ParsePDF` and `ParseByExt` reject PDFs larger than 50 MiB or 2,000 pages by default. Before text
+extraction, pdfcpu validates object, XRef, stream, image, and recursion limits. Structural limit
+errors match `errors.Is(err, docling.ErrPDFResourceLimit)`; a corrupt or oversized individual image
+is skipped without discarding text.
+
+```go
+doc, err := docling.ParsePDFWithOptions(data, docling.PDFOptions{
+    Limits: docling.PDFLimits{MaxFileBytes: 100 << 20, MaxPages: 5000},
+})
+```
+
+Unset or non-positive fields use `DefaultPDFLimits()` and never disable protection. OCR and vision
+hooks can prefer `PageData`, the safely extracted single-page PDF, while `Data` remains the original
+file for backward compatibility.
+
 ## Command Line Tool (CLI)
 
 Prefer a terminal? The `docling` command ships in the same pure-Go single binary:

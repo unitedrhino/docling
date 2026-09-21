@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -65,12 +64,14 @@ func TestOCRHookImageInput(t *testing.T) {
 	}
 }
 
-// TestOCRHookPDFSinglePage 验证 PDF 请求抽取单页（第二页）为独立 data URI。
+// TestOCRHookPDFSinglePage 验证 PDF 请求优先使用 Docling 提供的 PageData。
 func TestOCRHookPDFSinglePage(t *testing.T) {
 	client := &fakeClient{response: "识别文本"}
-	pdf := mustBuildTwoPagePDF(t)
+	pageData := []byte("%PDF-1.4\nsingle-page\n%%EOF")
 	hook := NewOCRHook(client, Options{})
-	if _, err := hook(docling.OCRRequest{PageNo: 2, MIMEType: "application/pdf", Data: pdf}); err != nil {
+	if _, err := hook(docling.OCRRequest{
+		PageNo: 2, MIMEType: "application/pdf", Data: []byte("original-pdf"), PageData: pageData,
+	}); err != nil {
 		t.Fatalf("hook: %v", err)
 	}
 	uri := client.requests[0].Images[0].DataURI
@@ -78,12 +79,23 @@ func TestOCRHookPDFSinglePage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.HasPrefix(string(payload), "%PDF") {
-		t.Fatalf("payload not pdf: %q", string(payload[:20]))
+	if string(payload) != string(pageData) {
+		t.Fatalf("payload=%q, want PageData %q", payload, pageData)
 	}
-	// pdfcpu 重序列化后的单页 PDF 不应再有 /Count 2 的两页树。
-	if strings.Contains(string(payload), "/Count 2") {
-		t.Fatalf("extracted page still has 2 pages")
+}
+
+// TestOCRHookPDFOriginalFallback 验证旧调用方未提供 PageData 时仅在安全
+// 大小内回退原始 PDF，并在提示词中严格限制目标页。
+func TestOCRHookPDFOriginalFallback(t *testing.T) {
+	client := &fakeClient{response: "识别文本"}
+	hook := NewOCRHook(client, Options{})
+	original := []byte("%PDF-1.4\noriginal\n%%EOF")
+	if _, err := hook(docling.OCRRequest{PageNo: 3, MIMEType: "application/pdf", Data: original}); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+	if !strings.Contains(client.requests[0].Prompt, "原始多页 PDF") ||
+		!strings.Contains(client.requests[0].Prompt, "页号：3") {
+		t.Fatalf("fallback prompt=%q", client.requests[0].Prompt)
 	}
 }
 
@@ -113,10 +125,9 @@ func TestVisualHookDecode(t *testing.T) {
 	}}}
 	raw, _ := json.Marshal(items)
 	client := &fakeClient{response: "```json\n" + string(raw) + "\n```"}
-	pdf := mustBuildTwoPagePDF(t)
 	hook := NewPDFVisualHook(client, Options{})
 	request := docling.PDFVisualRequest{
-		PageNo: 1, MIMEType: "application/pdf", Data: pdf,
+		PageNo: 1, MIMEType: "application/pdf", Data: []byte("original"), PageData: []byte("single-page"),
 		Width: 612, Height: 792,
 		Quality: docling.PDFPageQuality{NeedsVisual: true, Reasons: []string{"low_text"}},
 		Prompt:  docling.PDFStructuredVisualPrompt,
@@ -145,7 +156,7 @@ func TestVisualHookEmbeddedImages(t *testing.T) {
 		BBox:  &docling.DoclingBBox{L: 10, B: 20, R: 110, T: 120},
 	}
 	if _, err := hook(docling.PDFVisualRequest{
-		PageNo: 1, MIMEType: "application/pdf", Data: mustBuildTwoPagePDF(t),
+		PageNo: 1, MIMEType: "application/pdf", Data: []byte("original"), PageData: []byte("single-page"),
 		EmbeddedImages: []docling.PDFVisualImage{embedded},
 		Prompt:         "协议",
 	}); err != nil {
@@ -157,31 +168,4 @@ func TestVisualHookEmbeddedImages(t *testing.T) {
 	if !strings.Contains(client.requests[0].Prompt, "bbox：l=10.00,b=20.00,r=110.00,t=120.00") {
 		t.Fatalf("prompt missing bbox: %q", client.requests[0].Prompt)
 	}
-}
-
-// mustBuildTwoPagePDF 手工构造最小可解析的两页 PDF（内容无关紧要,仅验证
-// pdfcpu 单页抽取）。
-func mustBuildTwoPagePDF(t *testing.T) []byte {
-	t.Helper()
-	objects := []string{
-		"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-		"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
-		"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
-		"4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
-	}
-	var buf []byte
-	buf = append(buf, "%PDF-1.4\n"...)
-	offsets := make([]int, len(objects))
-	for i, obj := range objects {
-		offsets[i] = len(buf)
-		buf = append(buf, obj...)
-	}
-	xrefStart := len(buf)
-	buf = append(buf, []byte(fmt.Sprintf("xref\n0 %d\n", len(objects)+1))...)
-	buf = append(buf, "0000000000 65535 f \n"...)
-	for _, off := range offsets {
-		buf = append(buf, []byte(fmt.Sprintf("%010d 00000 n \n", off))...)
-	}
-	buf = append(buf, []byte(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefStart))...)
-	return buf
 }

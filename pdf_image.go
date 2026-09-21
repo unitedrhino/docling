@@ -19,10 +19,10 @@ import (
 	"strings"
 
 	"github.com/ledongthuc/pdf"
-	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	pdfcpufilter "github.com/pdfcpu/pdfcpu/pkg/filter"
 	pdfcpucore "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	pdfcpumodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	_ "golang.org/x/image/tiff"
 )
 
 const (
@@ -1983,6 +1983,16 @@ func pdfImageCoverage(images []pdfImagePlacement, pageWidth, pageHeight float64)
 // 关联为图片中间行。单个资源被多次绘制时复用同一像素数据但保留每次 bbox；
 // 解码失败、资源不受支持或超过安全上限时只跳过该图片，不影响 PDF 正文。
 func extractPDFEmbeddedPictureLines(data []byte, placementsByPage map[int64][]pdfImagePlacement) []pdfLine {
+	runtime, err := newPDFRuntime(data, PDFLimits{})
+	if err != nil {
+		return extractPDFEmbeddedPictureLinesWithContext(nil, placementsByPage)
+	}
+	return extractPDFEmbeddedPictureLinesWithContext(runtime.context, placementsByPage)
+}
+
+// extractPDFEmbeddedPictureLinesWithContext 复用主解析阶段已通过安全预检的
+// pdfcpu Context；单张资源解码失败仍由逐对象隔离逻辑跳过。
+func extractPDFEmbeddedPictureLinesWithContext(context *pdfcpumodel.Context, placementsByPage map[int64][]pdfImagePlacement) []pdfLine {
 	selectedPages := safePDFImagePages(placementsByPage)
 	if len(selectedPages) == 0 {
 		return nil
@@ -2004,14 +2014,7 @@ func extractPDFEmbeddedPictureLines(data []byte, placementsByPage map[int64][]pd
 				MinX: placement.BBox.L, MaxX: placement.BBox.R, MinY: placement.BBox.B, MaxY: placement.BBox.T})
 		}
 	}
-	if len(data) == 0 {
-		return lines
-	}
-	configuration := pdfcpumodel.NewDefaultConfiguration()
-	configuration.UnsupportedResourcePolicy = pdfcpumodel.UnsupportedResourceSkip
-	configuration.Cmd = pdfcpumodel.EXTRACTIMAGES
-	context, err := pdfcpuapi.ReadValidateAndOptimize(bytes.NewReader(data), configuration)
-	if err != nil {
+	if context == nil {
 		return lines
 	}
 	extractedByPage := collectPDFCPUPageImages(selectedPages, func(pageNo int) (map[int]pdfcpumodel.Image, error) {
@@ -2080,6 +2083,10 @@ func collectPDFCPUPageImages(selectedPages []int64, extract func(pageNo int) (ma
 			}
 			if apply != nil {
 				decoded = apply(objectNumber, decoded)
+			}
+			decoded, ok = validatePDFExtractedImage(decoded)
+			if !ok {
+				continue
 			}
 			extractedByPage[pageIdx] = append(extractedByPage[pageIdx], decoded)
 		}
@@ -2183,6 +2190,30 @@ func readPDFExtractedImage(resource pdfcpumodel.Image) (pdfExtractedImage, bool)
 		Name: strings.TrimPrefix(resource.Name, "/"), MIMEType: mimeType,
 		Data: raw, PixelWidth: width, PixelHeight: height,
 	}, true
+}
+
+// validatePDFExtractedImage 在生成 data URI 前验证最终图片字节和解码尺寸。
+// 损坏、无法验证或超出 pdfcpu 图片预算的单张资源直接跳过，不影响正文。
+func validatePDFExtractedImage(decoded pdfExtractedImage) (pdfExtractedImage, bool) {
+	if len(decoded.Data) == 0 {
+		return pdfExtractedImage{}, false
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(decoded.Data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return pdfExtractedImage{}, false
+	}
+	width, height := int64(config.Width), int64(config.Height)
+	limits := newPDFCPUConfiguration().Limits
+	if width > pdfMaxExtractDimension || height > pdfMaxExtractDimension ||
+		width > limits.MaxImagePixels/height {
+		return pdfExtractedImage{}, false
+	}
+	pixels := width * height
+	if pixels > limits.MaxImagePixels || pixels > limits.MaxImageBytes/4 {
+		return pdfExtractedImage{}, false
+	}
+	decoded.PixelWidth, decoded.PixelHeight = width, height
+	return decoded, true
 }
 
 // matchPDFExtractedImage 按资源名优先、像素尺寸次之关联几何和像素数据。

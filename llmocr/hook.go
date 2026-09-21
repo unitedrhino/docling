@@ -1,18 +1,15 @@
 // hook.go 把 LLMClient 适配为 docling 的 OCRHook 与 PDFVisualHook：负责单页
-// 抽取、data URI 组装、提示词构建与视觉结果 JSON 解码；调用预算（页数上限）
+// PageData 的 data URI 组装、提示词构建与视觉结果 JSON 解码；调用预算（页数上限）
 // 在钩子闭包内计数，超限后返回空结果交还 docling 内置的纯 Go 兜底路径。
 package llmocr
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/unitedrhino/docling"
 )
 
@@ -53,9 +50,9 @@ func (b *pageBudget) allow() bool {
 	return true
 }
 
-// NewOCRHook 把 client 适配为 docling.OCRHook。请求中 Data 是原始全量文件
-// 字节：图片直接转 data URI；PDF 先用 pdfcpu 抽取单页（失败且原文不超过
-// maxOriginalPDFFallbackBytes 时回退整份 PDF，由提示词限定页号）。
+// NewOCRHook 把 client 适配为 docling.OCRHook。图片 Data 直接转 data URI；
+// PDF 优先使用 Docling 提供的 PageData，缺失时仅对安全大小内的原始 Data
+// 做兼容回退，并由提示词限定页号。
 func NewOCRHook(client LLMClient, opts Options) docling.OCRHook {
 	budget := &pageBudget{max: opts.MaxPages}
 	system := opts.SystemPrompt
@@ -66,11 +63,11 @@ func NewOCRHook(client LLMClient, opts Options) docling.OCRHook {
 		if !budget.allow() {
 			return "", nil
 		}
-		images, err := ocrInputs(request)
+		images, originalFallback, err := ocrInputs(request)
 		if err != nil {
 			return "", err
 		}
-		prompt := ocrPrompt(request)
+		prompt := ocrPrompt(request, originalFallback)
 		return client.Complete(context.Background(), VisionRequest{
 			SystemPrompt: system,
 			Prompt:       prompt,
@@ -79,8 +76,8 @@ func NewOCRHook(client LLMClient, opts Options) docling.OCRHook {
 	}
 }
 
-// ocrInputs 按 MIME 组装识别输入：图片整份转 data URI；PDF 抽取单页。
-func ocrInputs(request docling.OCRRequest) ([]ImageInput, error) {
+// ocrInputs 按 MIME 组装识别输入：图片整份转 data URI；PDF 使用 PageData。
+func ocrInputs(request docling.OCRRequest) ([]ImageInput, bool, error) {
 	mimeType := request.MIMEType
 	if mimeType == "" {
 		mimeType = "application/pdf"
@@ -89,21 +86,21 @@ func ocrInputs(request docling.OCRRequest) ([]ImageInput, error) {
 		return []ImageInput{{
 			MIMEType: mimeType,
 			DataURI:  fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(request.Data)),
-		}}, nil
+		}}, false, nil
 	}
-	payload, err := extractSinglePagePDF(request.Data, int(request.PageNo))
+	payload, originalFallback, err := pdfPagePayload(request.Data, request.PageData, int(request.PageNo))
 	if err != nil {
-		return nil, fmt.Errorf("llmocr: extract page %d failed: %w", request.PageNo, err)
+		return nil, false, err
 	}
 	return []ImageInput{{
 		MIMEType: "application/pdf",
 		DataURI:  "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(payload),
-	}}, nil
+	}}, originalFallback, nil
 }
 
 // ocrPrompt 构建单页识别的用户提示词；已有规则文本仅作校对参考，重试时
 // 透传 docling 内置的纠错反馈。
-func ocrPrompt(request docling.OCRRequest) string {
+func ocrPrompt(request docling.OCRRequest, originalFallback bool) string {
 	mimeType := request.MIMEType
 	if mimeType == "" {
 		mimeType = "application/pdf"
@@ -111,7 +108,11 @@ func ocrPrompt(request docling.OCRRequest) string {
 	var b strings.Builder
 	b.WriteString("逐字识别这份文档的当前页，不要总结、改写或臆造。\n")
 	if mimeType == "application/pdf" {
-		b.WriteString("输入是仅包含该页的单页 PDF。")
+		if originalFallback {
+			b.WriteString("输入是原始多页 PDF，只能识别指定页，禁止输出其他页面。")
+		} else {
+			b.WriteString("输入是仅包含该页的单页 PDF。")
+		}
 	} else {
 		b.WriteString("输入是完整图片文件。")
 	}
@@ -145,13 +146,13 @@ func NewPDFVisualHook(client LLMClient, opts Options) docling.PDFVisualHook {
 		if !budget.allow() {
 			return docling.PDFVisualResult{}, nil
 		}
-		images, err := visualInputs(request)
+		images, originalFallback, err := visualInputs(request)
 		if err != nil {
 			return docling.PDFVisualResult{}, err
 		}
 		response, err := client.Complete(context.Background(), VisionRequest{
 			SystemPrompt: system,
-			Prompt:       visualPrompt(request),
+			Prompt:       visualPrompt(request, originalFallback),
 			Images:       images,
 		})
 		if err != nil {
@@ -161,19 +162,22 @@ func NewPDFVisualHook(client LLMClient, opts Options) docling.PDFVisualHook {
 	}
 }
 
-func visualInputs(request docling.PDFVisualRequest) ([]ImageInput, error) {
-	payload, err := extractSinglePagePDF(request.Data, int(request.PageNo))
+func visualInputs(request docling.PDFVisualRequest) ([]ImageInput, bool, error) {
+	payload, originalFallback, err := pdfPagePayload(request.Data, request.PageData, int(request.PageNo))
 	if err != nil {
-		return nil, fmt.Errorf("llmocr: extract page %d failed: %w", request.PageNo, err)
+		return nil, false, err
 	}
 	images := []ImageInput{{
 		MIMEType: "application/pdf",
 		DataURI:  "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(payload),
 	}}
 	for _, embedded := range request.EmbeddedImages {
+		if embedded.Image == nil {
+			continue
+		}
 		uri := strings.TrimSpace(embedded.Image.URI)
 		comma := strings.IndexByte(uri, ',')
-		if embedded.Image == nil || !strings.HasPrefix(uri, "data:") ||
+		if !strings.HasPrefix(uri, "data:") ||
 			comma <= len("data:") || !strings.HasSuffix(strings.ToLower(uri[:comma]), ";base64") {
 			continue
 		}
@@ -183,25 +187,31 @@ func visualInputs(request docling.PDFVisualRequest) ([]ImageInput, error) {
 		}
 		images = append(images, ImageInput{MIMEType: mimeType, DataURI: uri})
 	}
-	return images, nil
+	return images, originalFallback, nil
 }
 
 // visualPrompt 在内置协议提示词上补充页号、页面尺寸、质量触发原因与有界
 // 已有文本，避免模型在不知道坐标范围时猜测 bbox。
-func visualPrompt(request docling.PDFVisualRequest) string {
+func visualPrompt(request docling.PDFVisualRequest, originalFallback bool) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(request.Prompt))
 	fmt.Fprintf(&b, "\n当前仅分析第 %d 页；页面宽 %.2f pt、高 %.2f pt。", request.PageNo, request.Width, request.Height)
+	if originalFallback {
+		b.WriteString("附件是原始多页 PDF，只能分析指定页，禁止输出其他页面。")
+	}
 	b.WriteString("所有 bbox 必须落在该范围内并使用 BOTTOMLEFT：l/r 从左向右，b/t 从下向上；若视觉坐标来自左上角，先按 PDF 高度换算后再输出。")
 	if len(request.Quality.Reasons) > 0 {
-		b.WriteString("\n纯 Go 质量检测触发原因：")
+		b.WriteString("\nGo Docling 质量检测触发原因：")
 		b.WriteString(strings.Join(request.Quality.Reasons, ", "))
 		b.WriteString("。")
 	}
 	for i, embedded := range request.EmbeddedImages {
+		if embedded.Image == nil {
+			continue
+		}
 		uri := strings.TrimSpace(embedded.Image.URI)
 		comma := strings.IndexByte(uri, ',')
-		if embedded.Image == nil || !strings.HasPrefix(uri, "data:") ||
+		if !strings.HasPrefix(uri, "data:") ||
 			comma <= len("data:") || !strings.HasSuffix(strings.ToLower(uri[:comma]), ";base64") {
 			continue
 		}
@@ -213,7 +223,7 @@ func visualPrompt(request docling.PDFVisualRequest) string {
 		fmt.Fprintf(&b, "\n补充图片 %d 对应当前 PDF 页面的 bbox：%s。请结合单页 PDF 判断其是照片、图表、图示还是图片表格。", i+1, bboxText)
 	}
 	if s := strings.TrimSpace(request.ExistingText); s != "" {
-		b.WriteString("\n以下是纯 Go 已提取文本，仅用于逐字校对；乱码、漏字和顺序必须以页面视觉为准：\n<existing_text>\n")
+		b.WriteString("\n以下是 Go Docling 已提取文本，仅用于逐字校对；乱码、漏字和顺序必须以页面视觉为准：\n<existing_text>\n")
 		b.WriteString(truncateRunes(s, maxExistingTextRunes))
 		b.WriteString("\n</existing_text>")
 	}
@@ -244,32 +254,19 @@ func decodeVisualResult(response string) (docling.PDFVisualResult, error) {
 	return result, nil
 }
 
-// extractSinglePagePDF 从原始 PDF 中抽取单页（1 起页号）为独立 PDF 字节；
-// 抽取失败且原文在安全大小时内回退整份 PDF（提示词已限定页号）。
-func extractSinglePagePDF(pdfBytes []byte, pageNo int) ([]byte, error) {
+// pdfPagePayload 优先返回 Docling 已安全抽取的单页 PDF；PageData 缺失时
+// 仅对安全大小内的原始 PDF 做兼容回退，不再重复调用 pdfcpu 解析原文件。
+func pdfPagePayload(pdfBytes, pageData []byte, pageNo int) ([]byte, bool, error) {
 	if pageNo < 1 {
-		return nil, fmt.Errorf("page number %d out of range", pageNo)
+		return nil, false, fmt.Errorf("llmocr: page number %d out of range", pageNo)
 	}
-	rs := bytes.NewReader(pdfBytes)
-	var out []byte
-	digest := func(pageReader io.Reader, _ int) error {
-		b, err := io.ReadAll(pageReader)
-		if err != nil {
-			return err
-		}
-		out = b
-		return nil
+	if len(pageData) > 0 {
+		return pageData, false, nil
 	}
-	if err := api.ExtractPages(rs, []string{fmt.Sprintf("%d", pageNo)}, digest, nil); err != nil {
-		if len(pdfBytes) == 0 || len(pdfBytes) > maxOriginalPDFFallbackBytes {
-			return nil, err
-		}
-		return pdfBytes, nil
+	if len(pdfBytes) == 0 || len(pdfBytes) > maxOriginalPDFFallbackBytes {
+		return nil, false, fmt.Errorf("llmocr: single page PDF unavailable for page %d and original file exceeds fallback limit", pageNo)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("page %d extracted empty", pageNo)
-	}
-	return out, nil
+	return pdfBytes, true, nil
 }
 
 // truncateRunes 按 rune 数截断文本并追加省略标记。

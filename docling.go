@@ -63,6 +63,8 @@ func ParseByExt(name string, data []byte) (*DoclingDocument, error) {
 type ParseOptions struct {
 	// OriginURI 指定文档来源 URI；为空时不输出 origin.uri。
 	OriginURI string
+	// PDFLimits 指定 PDF 文件与页数限制；非正字段使用安全默认值。
+	PDFLimits PDFLimits
 	// OCRHook 是带完整文件上下文的新 OCR 钩子，优先于 PageOCRHook。
 	OCRHook OCRHook
 	// PageOCRHook 是旧版页级 OCR 钩子，供 PDF 与图片解析复用。
@@ -108,6 +110,7 @@ func parseByExtData(name string, data []byte, options ParseOptions) (*DoclingDoc
 		return ParseCSV(data)
 	case ".pdf":
 		return ParsePDFWithOptions(data, PDFOptions{
+			Limits:                         options.PDFLimits,
 			VisualHook:                     options.PDFVisualHook,
 			VisualAlways:                   options.PDFVisualAlways,
 			MaxVisualPages:                 options.MaxPDFVisualPages,

@@ -26,11 +26,10 @@ const (
 	ocrRepeatedLineMinTotal = 8
 )
 
-// PageOCRHook 扫描页/高乱码页识别钩子：pageNo 从 1 起；pdfBytes 为
-// 原始 PDF 全量字节（实现方自行抽取单页并调用识别服务，如 pdfcpu
-// ExtractPages 后经多模态模型识别），返回该页识别文本（推荐 Markdown，
-// 可携带标题层级/表格/列表，将结构化并入主文档）；返回空文本或错误时
-// 该页维持原有兜底行为。
+// PageOCRHook 扫描页/高乱码页识别兼容钩子：pageNo 从 1 起，pdfBytes 为
+// 原始 PDF 全量字节。新调用方应优先使用 OCRHook 的安全单页 PageData；
+// 本钩子返回该页识别文本（推荐 Markdown，可携带标题层级/表格/列表），
+// 返回空文本或错误时该页维持原有兜底行为。
 type PageOCRHook func(pageNo int64, pdfBytes []byte) (string, error)
 
 // OCRRequest 描述一次页级或图片 OCR 请求，向实现方提供文件上下文与当前
@@ -39,8 +38,9 @@ type OCRRequest struct {
 	PageNo             int64  // PageNo 是从 1 开始的页号；独立图片固定为 1。
 	MIMEType           string // MIMEType 是原文件 MIME。
 	Filename           string // Filename 是原文件名。
-	Data               []byte // Data 是原始文件字节，由钩子按 PageNo 抽取页面。
-	ExistingText       string // ExistingText 是纯 Go 或 Poppler 已提取的页面文本。
+	Data               []byte // Data 是原始文件字节，作为现有调用方兼容字段保留。
+	PageData           []byte // PageData 是 Docling 安全抽取的单页 PDF；图片输入为空。
+	ExistingText       string // ExistingText 是 Go Docling 或 Poppler 已提取的页面文本。
 	Attempt            int    // Attempt 是从 1 开始的本页调用次数。
 	ValidationFeedback string // ValidationFeedback 是前一次失败的纠错提示，首次为空。
 }
@@ -50,6 +50,8 @@ type OCRHook func(request OCRRequest) (string, error)
 
 // PDFOptions PDF 解析可选能力。
 type PDFOptions struct {
+	// Limits 是 PDF 文件与页数限制；非正字段使用 DefaultPDFLimits。
+	Limits PDFLimits
 	// VisualHook 是复杂页面的结构化视觉钩子；nil 时完全保持纯 Go 路径。
 	VisualHook PDFVisualHook
 	// VisualAlways 要求对每个有效页尝试结构化视觉；主要用于调用方已自行
@@ -263,6 +265,10 @@ func isMarkdownTableSeparatorLine(line string) bool {
 // 按页序并入主文档（元素 prov 标注实际页号）；失败或未设置钩子时维持
 // 原有行为（扫描页无内容、乱码页保留原文本）。
 func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) {
+	runtime, err := newPDFRuntime(data, opt.Limits)
+	if err != nil {
+		return nil, err
+	}
 	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, err
@@ -287,7 +293,7 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 	}
 	var pictureLines []pdfLine
 	if !opt.DisableEmbeddedImageExtraction {
-		pictureLines = extractPDFEmbeddedPictureLines(data, imagePlacementsByPage)
+		pictureLines = extractPDFEmbeddedPictureLinesWithContext(runtime.context, imagePlacementsByPage)
 	}
 	var allLines []pdfLine
 	sawText := false
@@ -331,7 +337,8 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 		if canRunVisual && (opt.VisualAlways || quality.NeedsVisual) {
 			visualPages++
 			request := PDFVisualRequest{
-				PageNo: int64(i), MIMEType: opt.MIMEType, Filename: opt.Filename, Data: data,
+				PageNo: int64(i), MIMEType: opt.MIMEType, Filename: opt.Filename,
+				Data: data, PageData: runtime.singlePageData(i),
 				Width: width, Height: height, ExistingText: pageText, Quality: quality,
 				EmbeddedImages: pdfVisualImagesForPage(pictureLines, int64(i-1)),
 			}
@@ -350,7 +357,9 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 				(threshold > 0 && textGarbageRatio(pageText) > threshold)
 			if needOCR {
 				ocrAttempted[i] = true
-				if ocrText, ok := runOCR(opt, OCRRequest{PageNo: int64(i), Data: data, ExistingText: pageText}); ok {
+				if ocrText, ok := runOCR(opt, OCRRequest{
+					PageNo: int64(i), Data: data, PageData: runtime.singlePageData(i), ExistingText: pageText,
+				}); ok {
 					if sub, subErr := ParseMarkdown([]byte(ocrText)); subErr == nil &&
 						len(sub.Texts)+len(sub.Tables) > 0 {
 						allLines = append(allLines, pdfLine{
@@ -410,7 +419,9 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 			if ocrAttempted[i] {
 				continue
 			}
-			ocrText, ok := runOCR(opt, OCRRequest{PageNo: int64(i), Data: data})
+			ocrText, ok := runOCR(opt, OCRRequest{
+				PageNo: int64(i), Data: data, PageData: runtime.singlePageData(i),
+			})
 			if !ok {
 				continue
 			}

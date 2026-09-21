@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ledongthuc/pdf"
 )
 
 // TestParsePDFOCRRequestContext 验证新版 OCRHook 收到完整 PDF 上下文，且
@@ -24,6 +26,16 @@ func TestParsePDFOCRRequestContext(t *testing.T) {
 				request.Filename != "扫描件.pdf" || request.ExistingText != "" ||
 				!bytes.Equal(request.Data, data) {
 				t.Fatalf("OCR request wrong: %+v", request)
+			}
+			if len(request.PageData) == 0 {
+				t.Fatal("OCR request should contain an extracted single-page PDF")
+			}
+			pageReader, pageErr := pdf.NewReader(bytes.NewReader(request.PageData), int64(len(request.PageData)))
+			if pageErr != nil {
+				t.Fatalf("open OCR PageData: %v", pageErr)
+			}
+			if pageReader.NumPage() != 1 {
+				t.Fatalf("OCR PageData pages=%d, want 1", pageReader.NumPage())
 			}
 			return "扫描页正文。", nil
 		},

@@ -45,6 +45,7 @@ type PDFVisualRequest struct {
 	MIMEType           string           `json:"mimetype"`                      // MIMEType 是原文件 MIME。
 	Filename           string           `json:"filename"`                      // Filename 是原文件名。
 	Data               []byte           `json:"-"`                             // Data 是原始 PDF 字节。
+	PageData           []byte           `json:"-"`                             // PageData 是 Docling 安全抽取的单页 PDF。
 	Width              float64          `json:"width"`                         // Width 是页面宽度，单位为 point。
 	Height             float64          `json:"height"`                        // Height 是页面高度，单位为 point。
 	ExistingText       string           `json:"existing_text"`                 // ExistingText 是现有规则文本。
