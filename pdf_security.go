@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	pdfcpufilter "github.com/pdfcpu/pdfcpu/pkg/filter"
 	pdfcpucore "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	pdfcpumodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
@@ -175,6 +176,9 @@ func isPDFCPULimitError(err error) bool {
 		return false
 	}
 	if errors.Is(err, pdfcpumodel.ErrMaxRecursionDepthExceeded) {
+		return true
+	}
+	if errors.Is(err, pdfcpufilter.ErrDecodeLimitExceeded) {
 		return true
 	}
 	message := strings.ToLower(err.Error())

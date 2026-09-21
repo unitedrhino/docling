@@ -3,10 +3,13 @@
 package docling
 
 import (
+	"bytes"
+	"compress/zlib"
 	"errors"
 	"strings"
 	"testing"
 
+	pdfcpufilter "github.com/pdfcpu/pdfcpu/pkg/filter"
 	pdfcpumodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	pdfcputypes "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -102,6 +105,76 @@ func TestPDFCPURejectsOversizedXRef(t *testing.T) {
 	_, err := pdfcpumodel.ParseXRefStreamDictWithLimits(&stream, newPDFCPUConfiguration().Limits)
 	if err == nil || !isPDFCPULimitError(err) {
 		t.Fatalf("oversized xref err=%v, want classified resource limit", err)
+	}
+}
+
+// TestPDFCPURejectsObjectStreamLimits 验证对象流条目数与头部偏移的固定
+// 限制均在对象流解码前生效，并统一转换为公开资源限制错误。
+func TestPDFCPURejectsObjectStreamLimits(t *testing.T) {
+	limits := newPDFCPUConfiguration().Limits
+	tests := []struct {
+		name  string
+		count int
+		first int
+	}{
+		{name: "object count", count: limits.MaxObjectStreamCount + 1},
+		{name: "header bytes", count: 1, first: int(limits.MaxObjectStreamFirst + 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stream := pdfcputypes.StreamDict{Dict: pdfcputypes.Dict{
+				"N":     pdfcputypes.Integer(test.count),
+				"First": pdfcputypes.Integer(test.first),
+			}}
+			_, err := pdfcpumodel.ObjectStreamDictWithLimits(&stream, limits)
+			if err == nil || !isPDFCPULimitError(err) {
+				t.Fatalf("object stream err=%v, want classified resource limit", err)
+			}
+			limitErr := newPDFCPULimitError(err)
+			if limitErr == nil || limitErr.Resource != "object stream" {
+				t.Fatalf("object stream limit detail=%+v", limitErr)
+			}
+		})
+	}
+}
+
+// TestPDFCPURejectsDecodedStreamExpansion 验证小体积压缩流不能绕过单流
+// 解压上限形成内存膨胀，底层哨兵错误会映射为公开资源限制错误。
+func TestPDFCPURejectsDecodedStreamExpansion(t *testing.T) {
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	if _, err := writer.Write(bytes.Repeat([]byte("A"), 4096)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stream := pdfcputypes.StreamDict{
+		Raw:            compressed.Bytes(),
+		FilterPipeline: []pdfcputypes.PDFFilter{{Name: pdfcpufilter.Flate}},
+	}
+	err := stream.DecodeWithLimit(512)
+	if !errors.Is(err, pdfcpufilter.ErrDecodeLimitExceeded) || !isPDFCPULimitError(err) {
+		t.Fatalf("decode expansion err=%v, want classified decode limit", err)
+	}
+	limitErr := newPDFCPULimitError(err)
+	if limitErr == nil || limitErr.Resource != "decoded stream bytes" {
+		t.Fatalf("decode limit detail=%+v", limitErr)
+	}
+}
+
+// TestPDFCPURejectsRecursionDepth 验证对象图递归超过固定深度时停止遍历，
+// 并保留实际深度与限制值供调用方诊断。
+func TestPDFCPURejectsRecursionDepth(t *testing.T) {
+	maxDepth := newPDFCPUConfiguration().Limits.MaxRecursionDepth
+	err := pdfcpumodel.CheckRecursionDepth("object graph", maxDepth+1, maxDepth)
+	if !errors.Is(err, pdfcpumodel.ErrMaxRecursionDepthExceeded) || !isPDFCPULimitError(err) {
+		t.Fatalf("recursion err=%v, want classified recursion limit", err)
+	}
+	limitErr := newPDFCPULimitError(err)
+	if limitErr == nil || limitErr.Resource != "recursion depth" ||
+		limitErr.Actual != int64(maxDepth+1) || limitErr.Limit != int64(maxDepth) {
+		t.Fatalf("recursion limit detail=%+v", limitErr)
 	}
 }
 
