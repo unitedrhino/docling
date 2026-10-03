@@ -304,6 +304,8 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 	ocrAttempted := make(map[int]bool, pageCount)
 	var popplerBk *popplerBackend
 	visualPages := 0
+	// 各页矢量框线段（显示坐标），供有线表格还原；仅在有文本行时登记消费
+	pageEdges := make(map[int64][]pdfRuleEdge, pageCount)
 	for i := 1; i <= pageCount; i++ {
 		page := reader.Page(i)
 		if page.V.IsNull() {
@@ -327,6 +329,11 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 			if pl := tryPopplerFallback(popplerBk, int64(i-1), lines); len(pl) > 0 {
 				lines = pl
 			}
+		}
+		// 各页矢量框线段（显示坐标），供有线表格还原；页面无文本行时
+		// 表格无从装填文字，跳过提取
+		if len(lines) > 0 {
+			pageEdges[int64(i-1)] = extractPDFPageRuleEdges(page, geometry)
 		}
 		// 结构化视觉增强只在显式配置后运行。默认由纯 Go 质量信号触发；
 		// 结果经过强校验与一次重试，再按 bbox 区域替换以避免重复正文。
@@ -395,7 +402,7 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 		if sawText {
 			classifyPDFFurnitureLines(allLines, pageCount)
 			annotatePDFTOCRegions(allLines)
-			allLines = preparePDFLinesForDocument(allLines)
+			allLines = preparePDFLinesForDocument(allLines, pageEdges)
 			allLines = mergePDFContinuationTables(allLines, doc.Pages)
 			allLines = mergePDFPictureLines(allLines, pictureLines)
 			buildPDFDoclingDocument(buildPDFBlocks(buildPDFElements(allLines)), doc)
@@ -439,7 +446,7 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 	// 应用 XY-cut；版式行与表格均不参与正文字号统计与标题判定。
 	classifyPDFFurnitureLines(allLines, pageCount)
 	annotatePDFTOCRegions(allLines)
-	allLines = preparePDFLinesForDocument(allLines)
+	allLines = preparePDFLinesForDocument(allLines, pageEdges)
 	allLines = mergePDFContinuationTables(allLines, doc.Pages)
 	allLines = mergePDFPictureLines(allLines, pictureLines)
 	buildPDFDoclingDocument(buildPDFBlocks(buildPDFElements(allLines)), doc)
