@@ -4,7 +4,7 @@
 
 > 把任何文档喂给你的大模型 —— 纯 Go 单二进制,快 1~2 个数量级,复杂页可挂大模型增强。
 
-`docling` 将 PDF、Word、PPT、Excel/CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本与 CAD 图纸(DWG/DXF)解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
+`docling` 将 PDF、Word、PPT、Excel/CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本、CAD 图纸(DWG/DXF)与 GLB 三维模型解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
 
 > 命名说明:本仓库是 [Docling](https://github.com/docling-project/docling) 协议的纯 Go 实现,Go 包名为 `docling`,与 Python 官方实现共享同一文档模型。
 
@@ -16,7 +16,7 @@
 
 | 痛点 | docling(Go)的答案 |
 |------|---------------------|
-| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:13 种格式一个入口、一套 API,输出对齐官方协议 |
+| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:14 种格式一个入口、一套 API,输出对齐官方协议 |
 | 现有高质方案(Python 模型管线)部署重:Python 服务 + 数 GB 布局/表格模型,批量入库、CI、边缘节点很难落地 | 纯 Go 单二进制,`go get` 即用,毫秒~秒级解析,零外部服务 |
 | 全靠模型太贵太慢,全靠规则质量有上限 | 混合架构:规则引擎保底,扫描件/图片表格/公式密集页按质量信号自动路由给大模型——模型只用在刀刃上 |
 | 模型转写会"幻觉"改数据,入库结果不可信 | 不伪造结果:图表数据从文档自带缓存精确还原,规则不确定的内容保留原始信号并明示,而非猜一个 |
@@ -142,11 +142,16 @@ xychart-beta
 | AsciiDoc | `ParseAsciiDoc` | 标题树、列表、字面/源码块 |
 | EML 邮件 | `ParseEML` | RFC 5322 头、正文择优、常见字符集、附件名称 |
 | CAD 图纸 | `ParseCAD` | DWG(R9~R2018)/DXF(ASCII/二进制)自动识别、智能图框拆分逐框一页(图名标题+渲染图+图框文本)、GBK/UTF-16 中文解码 |
+| 三维模型 GLB | `ParseGLB` | GLB 2.0 场景、节点父子关系、网格/渲染材质名称与已有自定义属性;保留节点索引来源,不渲染几何或推测工程参数 |
 | 图片 | `ParseImage` | PNG/JPEG/BMP/WEBP;配置 OCR 后追加识别结构 |
 | 纯文本 | `ParseText` | BOM 与控制字符清理 |
 | Docling JSON | `ParseDoclingDocument` | 解析 Docling 服务输出的 JSON |
 
 ## 快速上手
+
+GLB 可以使用同一入口 `ParseByExt("设备.glb", data)`，再输出 Markdown、JSON 或 content_list。JSON 指针与对象索引用于回到模型节点，重复名称仍能区分。设备型号、编号等只提取文件已有属性，大整数保持原始精度。
+
+GLB 输入上限为 128 MiB，其中 JSON 元数据块最多 16 MiB、节点最多 10,000 个。本入口不读取外部几何/纹理资源，不解码压缩网格，也不生成预览图片；渲染材质不是工程材料牌号。
 
 ```bash
 go get github.com/unitedrhino/docling
@@ -370,7 +375,7 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 | 维度 | anydoc(Rust) | docling(Go) |
 |------|----------------|----------------|
 | 定位 | 纯转换层:不做 OCR/chunking/图表语义 | 转换 + 结构化 + RAG 分块,一站到检索 |
-| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 13 种(强在 HTML、Markdown、AsciiDoc、EML 邮件、图片、CAD 图纸、Docling JSON 回读) |
+| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 14 种(强在 HTML、Markdown、AsciiDoc、EML 邮件、图片、CAD 图纸、GLB 模型、Docling JSON 回读) |
 | 输出 | 仅 GFM Markdown | Markdown / HTML / Docling JSON(无损)/ content_list + 三种分块器 |
 | PDF 深度 | 文本型直接提取;扫描件返回 Unsupported(OCR 走 Firecrawl 托管 API) | 文本型深度解析(跨页表格/多栏/字体乱码恢复/JPEG2000-JBIG2-软蒙版);扫描页可挂**自部署**大模型钩子 |
 | 图表 | 不解析图表语义 | OOXML 图表数据回填为可检索表格 + SVG 预览 |
@@ -434,6 +439,7 @@ docling/
 - [go-jpeg2000](https://github.com/mrjoshuak/go-jpeg2000)(Apache-2.0)— 纯 Go JPEG 2000 解码
 - [gobig2](https://github.com/dkrisman/gobig2)(Apache-2.0)— 纯 Go JBIG2 解码
 - [goldmark](https://github.com/yuin/goldmark)(MIT)、[golang.org/x/net](https://pkg.go.dev/golang.org/x/net)、[golang.org/x/text](https://pkg.go.dev/golang.org/x/text)、[golang.org/x/image](https://pkg.go.dev/golang.org/x/image)
+- [qmuntal/gltf](https://github.com/qmuntal/gltf)(BSD-2-Clause)— 纯 Go glTF 元数据类型,本入口不加载几何
 - [Docling](https://github.com/docling-project/docling)(MIT)— 输出协议与分块语义的参考实现
 
 ## 社区与共建

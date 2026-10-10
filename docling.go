@@ -152,6 +152,8 @@ func parseByExtData(name string, data []byte, options ParseOptions) (*DoclingDoc
 			MIMEType: mimeType,
 			Filename: filepath.Base(name),
 		})
+	case ".glb":
+		return ParseGLB(data)
 	default:
 		return nil, fmt.Errorf("docling: 不支持的文件类型 %s", filepath.Ext(name))
 	}
@@ -218,6 +220,8 @@ func documentMIMEForExt(ext string) string {
 	case ".dxf", ".dxfb":
 		// DXF ASCII 与二进制变体同 MIME（二进制只是编码差异，语义同源）
 		return "image/vnd.dxf"
+	case ".glb":
+		return "model/gltf-binary"
 	default:
 		return "application/octet-stream"
 	}
