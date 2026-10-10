@@ -7,6 +7,7 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
 	github.com/pdfcpu/pdfcpu v0.15.0
+	github.com/qmuntal/gltf v0.29.0
 	github.com/unitedrhino/go-cad v0.0.0-20261001090957-ddd91eea9618
 	github.com/xuri/excelize/v2 v2.11.0
 	github.com/yuin/goldmark v1.7.8

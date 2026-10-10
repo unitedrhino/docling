@@ -37,7 +37,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "parse":
 		return runParse(args[1:], stdout, stderr)
 	case "formats":
-		for _, e := range []string{"pdf", "docx", "pptx", "xlsx", "csv", "html", "md", "adoc", "txt", "eml", "png", "jpg", "jpeg", "bmp", "webp", "dwg", "dxf", "dxfb"} {
+		for _, e := range []string{"pdf", "docx", "pptx", "xlsx", "csv", "html", "md", "adoc", "txt", "eml", "png", "jpg", "jpeg", "bmp", "webp", "dwg", "dxf", "dxfb", "glb"} {
 			fmt.Fprintln(stdout, e)
 		}
 		return 0

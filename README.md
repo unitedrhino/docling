@@ -4,7 +4,7 @@
 
 > 把任何文档喂给你的大模型 —— 纯 Go 单二进制,快 1~2 个数量级,复杂页可挂大模型增强。
 
-`docling` 将 PDF、Word、PPT、Excel/CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本与 CAD 图纸(DWG/DXF)解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
+`docling` 将 PDF、Word、PPT、Excel/CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本、CAD 图纸(DWG/DXF)与 GLB 三维模型解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
 
 > 命名说明:本仓库是 [Docling](https://github.com/docling-project/docling) 协议的纯 Go 实现,Go 包名为 `docling`,与 Python 官方实现共享同一文档模型。
 
@@ -16,7 +16,7 @@
 
 | 痛点 | docling(Go)的答案 |
 |------|---------------------|
-| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:13 种格式一个入口、一套 API,输出对齐官方协议 |
+| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:14 种格式一个入口、一套 API,输出对齐官方协议 |
 | 现有高质方案(Python 模型管线)部署重:Python 服务 + 数 GB 布局/表格模型,批量入库、CI、边缘节点很难落地 | 纯 Go 单二进制,`go get` 即用,毫秒~秒级解析,零外部服务 |
 | 全靠模型太贵太慢,全靠规则质量有上限 | 混合架构:规则引擎保底,扫描件/图片表格/公式密集页按质量信号自动路由给大模型——模型只用在刀刃上 |
 | 模型转写会"幻觉"改数据,入库结果不可信 | 不伪造结果:图表数据从文档自带缓存精确还原,规则不确定的内容保留原始信号并明示,而非猜一个 |
@@ -142,6 +142,7 @@ xychart-beta
 | AsciiDoc | `ParseAsciiDoc` | 标题树、列表、字面/源码块 |
 | EML 邮件 | `ParseEML` | RFC 5322 头、正文择优、常见字符集、附件名称 |
 | CAD 图纸 | `ParseCAD` | DWG(R9~R2018)/DXF(ASCII/二进制)自动识别、智能图框拆分逐框一页(图名标题+渲染图+图框文本)、GBK/UTF-16 中文解码 |
+| 三维模型 GLB | `ParseGLB` | GLB 2.0 场景、节点父子关系、网格/渲染材质名称与已有自定义属性;保留节点索引来源,不渲染几何或推测工程参数 |
 | 图片 | `ParseImage` | PNG/JPEG/BMP/WEBP;配置 OCR 后追加识别结构 |
 | 纯文本 | `ParseText` | BOM 与控制字符清理 |
 | Docling JSON | `ParseDoclingDocument` | 解析 Docling 服务输出的 JSON |
@@ -163,6 +164,31 @@ chunks := docling.HierarchicalChunks(doc)                   // 官方语义层�
 md := doc.ToMarkdown()
 html := doc.ToHTML()
 ```
+
+### GLB：提取模型信息
+
+GLB 2.0 可走同一解析入口，输出 Markdown、Docling JSON 和 content_list。场景、节点、网格、渲染材质分别组织成章节；节点父子关系、名称和文件已有的自定义属性进入可检索正文。
+
+```go
+// data 是已读取的 GLB 文件字节；统一入口会补齐文件名、MIME 和来源哈希。
+doc, err := docling.ParseByExt("设备.glb", data)
+if err != nil {
+    return err
+}
+
+// 可阅读的模型信息，以及按对象章节组织的知识库切片。
+md := doc.ToMarkdown()
+items := docling.ToContentList(doc, docling.SourceGolight)
+chunks := docling.ChunkContentList(items, docling.ContentChunkOptions{})
+```
+
+对象名称同时带索引，如 `节点[1] 电机`；属性正文保留 `#/nodes/1/extras` 等 JSON 指针，切片保留对应章节路径。即使节点重名，也能回到原模型核对。设备编号等大整数保持原始 JSON 精度。
+
+输入上限为 **128 MiB**，其中 JSON 块最多 **16 MiB**、节点最多 **10,000** 个。当前提取结构与已有属性，不加载外部几何/纹理资源、不解码压缩网格、不生成三维预览，也不根据外观推测尺寸、型号、工程材料或 BOM。
+
+结构、属性精度、统一输出和非法引用处理由 `glb_test.go` 验证；另外已使用标准二进制样本 BoxVertexColors 和 OrientationTest 核验 CLI 的三种输出。上述验证不代表完整几何兼容性验收。
+
+GLB 支持从 **v1.5.0** 开始提供，使用前请升级依赖；v1.4.0 及更早版本不包含此功能。
 
 ### 挂载大模型:现代混合解析
 
@@ -203,6 +229,9 @@ go install github.com/unitedrhino/docling/cmd/docling@latest
 
 # 渐进式:先看结构地图(章节树/表格/图片,几百字节)
 docling parse report.pdf --format outline
+# GLB 模型结构与属性：可阅读正文或知识库内容列表
+docling parse equipment.glb --format md
+docling parse equipment.glb --format content-list --out model.content-list.json
 # 通读全文,或按章节精取
 docling parse report.pdf --format md
 docling parse report.pdf --format md --section 第四章
@@ -370,7 +399,7 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 | 维度 | anydoc(Rust) | docling(Go) |
 |------|----------------|----------------|
 | 定位 | 纯转换层:不做 OCR/chunking/图表语义 | 转换 + 结构化 + RAG 分块,一站到检索 |
-| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 13 种(强在 HTML、Markdown、AsciiDoc、EML 邮件、图片、CAD 图纸、Docling JSON 回读) |
+| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 14 种(强在 HTML、Markdown、AsciiDoc、EML 邮件、图片、CAD 图纸、GLB 模型、Docling JSON 回读) |
 | 输出 | 仅 GFM Markdown | Markdown / HTML / Docling JSON(无损)/ content_list + 三种分块器 |
 | PDF 深度 | 文本型直接提取;扫描件返回 Unsupported(OCR 走 Firecrawl 托管 API) | 文本型深度解析(跨页表格/多栏/字体乱码恢复/JPEG2000-JBIG2-软蒙版);扫描页可挂**自部署**大模型钩子 |
 | 图表 | 不解析图表语义 | OOXML 图表数据回填为可检索表格 + SVG 预览 |
@@ -420,6 +449,7 @@ docling/
 ├── pdf*.go              # PDF:文本/布局/表格/视觉路由/图片编排
 ├── docx*.go pptx.go sheet.go # Word / PPT / Excel 解析
 ├── html.go markdown.go asciidoc.go eml.go image.go text.go table.go cad.go
+├── glb.go               # GLB 2.0 模型结构、已有属性与节点来源
 ├── internal/pdfenc/     # PDF 字节编码层:ToUnicode/CMap/SFNT 恢复、JPX/JBIG2 解码、软蒙版 alpha
 ├── internal/ooxml/      # Strict OOXML → Transitional 归一化
 ├── examples/            # 各格式样例源文件 ↔ Markdown 期望输出对照集
@@ -434,6 +464,7 @@ docling/
 - [go-jpeg2000](https://github.com/mrjoshuak/go-jpeg2000)(Apache-2.0)— 纯 Go JPEG 2000 解码
 - [gobig2](https://github.com/dkrisman/gobig2)(Apache-2.0)— 纯 Go JBIG2 解码
 - [goldmark](https://github.com/yuin/goldmark)(MIT)、[golang.org/x/net](https://pkg.go.dev/golang.org/x/net)、[golang.org/x/text](https://pkg.go.dev/golang.org/x/text)、[golang.org/x/image](https://pkg.go.dev/golang.org/x/image)
+- [qmuntal/gltf](https://github.com/qmuntal/gltf)(BSD-2-Clause)— 纯 Go glTF 元数据类型,本入口不加载几何
 - [Docling](https://github.com/docling-project/docling)(MIT)— 输出协议与分块语义的参考实现
 
 ## 社区与共建
