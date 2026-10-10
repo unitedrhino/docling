@@ -200,7 +200,7 @@ Input is limited to **128 MiB**, with at most **16 MiB** of JSON and **10,000 no
 
 `glb_test.go` covers structure, property precision, unified outputs and invalid references. The standard binary samples BoxVertexColors and OrientationTest have also been checked through all three CLI output formats. These checks do not establish complete geometry compatibility.
 
-GLB support is implemented on the current development branch and has not been released. Upgrade to a version containing this feature before use; v1.4.0 does not include it.
+GLB support is available from **v1.5.0**. Upgrade the dependency before use; v1.4.0 and earlier versions do not include this feature.
 
 ### Attach an LLM: modern hybrid parsing
 

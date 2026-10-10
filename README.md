@@ -188,7 +188,7 @@ chunks := docling.ChunkContentList(items, docling.ContentChunkOptions{})
 
 结构、属性精度、统一输出和非法引用处理由 `glb_test.go` 验证；另外已使用标准二进制样本 BoxVertexColors 和 OrientationTest 核验 CLI 的三种输出。上述验证不代表完整几何兼容性验收。
 
-GLB 支持已在当前开发分支实现，尚未发版；正式使用前需升级到包含该能力的 docling 版本，现有 v1.4.0 不含此功能。
+GLB 支持从 **v1.5.0** 开始提供，使用前请升级依赖；v1.4.0 及更早版本不包含此功能。
 
 ### 挂载大模型:现代混合解析
 
