@@ -161,10 +161,6 @@ xychart-beta
 
 ## Quick Start
 
-Use `ParseByExt("equipment.glb", data)` to export model metadata through the same Markdown, JSON and content-list pipeline. JSON pointers and indices distinguish nodes even when names repeat. Existing custom properties preserve large integer values exactly.
-
-GLB input is limited to 128 MiB, with at most 16 MiB of JSON metadata and 10,000 nodes. This parser does not load external geometry/textures, decompress meshes or render previews. Rendering materials do not imply engineering material specifications.
-
 ```bash
 go get github.com/unitedrhino/docling
 ```
@@ -180,6 +176,31 @@ chunks := docling.HierarchicalChunks(doc)                   // official hierarch
 md := doc.ToMarkdown()
 html := doc.ToHTML()
 ```
+
+### GLB: model metadata for knowledge bases
+
+GLB 2.0 uses the same entry point and produces Markdown, Docling JSON and content-list output. Scenes, nodes, meshes and rendering materials become separate sections; names, node relationships and existing custom properties become searchable text.
+
+```go
+// data contains the GLB bytes; the facade fills in the name, MIME and source hash.
+doc, err := docling.ParseByExt("equipment.glb", data)
+if err != nil {
+    return err
+}
+
+// Readable metadata and knowledge-base chunks grouped by object section.
+md := doc.ToMarkdown()
+items := docling.ToContentList(doc, docling.SourceGolight)
+chunks := docling.ChunkContentList(items, docling.ContentChunkOptions{})
+```
+
+Objects retain their indices alongside names. Property text includes JSON pointers such as `#/nodes/1/extras`, and chunks retain section paths, so duplicate names remain distinguishable. Large integer identifiers preserve their original JSON precision.
+
+Input is limited to **128 MiB**, with at most **16 MiB** of JSON and **10,000 nodes**. This parser extracts structure and existing properties. It does not load external geometry/textures, decompress meshes, render 3D previews or infer dimensions, model numbers, engineering materials or BOMs from appearance.
+
+`glb_test.go` covers structure, property precision, unified outputs and invalid references. The standard binary samples BoxVertexColors and OrientationTest have also been checked through all three CLI output formats. These checks do not establish complete geometry compatibility.
+
+GLB support is implemented on the current development branch and has not been released. Upgrade to a version containing this feature before use; v1.4.0 does not include it.
 
 ### Attach an LLM: modern hybrid parsing
 
@@ -227,6 +248,9 @@ go install github.com/unitedrhino/docling/cmd/docling@latest
 
 # Progressive disclosure: a tiny structure map first (headings/tables/images)
 docling parse report.pdf --format outline
+# GLB structure and properties: readable text or knowledge-base content list
+docling parse equipment.glb --format md
+docling parse equipment.glb --format content-list --out model.content-list.json
 # Full read, or drill into one chapter
 docling parse report.pdf --format md
 docling parse report.pdf --format md --section 第四章
@@ -479,6 +503,7 @@ docling/
 ├── pdf*.go              # PDF: text/layout/tables/vision routing/image orchestration
 ├── docx*.go pptx.go sheet.go # Word / PPT / Excel parsing
 ├── html.go markdown.go asciidoc.go eml.go image.go text.go table.go cad.go
+├── glb.go               # GLB 2.0 structure, existing properties and indexed sources
 ├── internal/pdfenc/     # PDF byte-encoding layer: ToUnicode/CMap/SFNT recovery, JPX/JBIG2 decoding, soft-mask alpha
 ├── internal/ooxml/      # Strict OOXML → Transitional normalization
 ├── examples/            # per-format sample sources paired with expected Markdown

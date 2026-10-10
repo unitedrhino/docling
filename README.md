@@ -149,10 +149,6 @@ xychart-beta
 
 ## 快速上手
 
-GLB 可以使用同一入口 `ParseByExt("设备.glb", data)`，再输出 Markdown、JSON 或 content_list。JSON 指针与对象索引用于回到模型节点，重复名称仍能区分。设备型号、编号等只提取文件已有属性，大整数保持原始精度。
-
-GLB 输入上限为 128 MiB，其中 JSON 元数据块最多 16 MiB、节点最多 10,000 个。本入口不读取外部几何/纹理资源，不解码压缩网格，也不生成预览图片；渲染材质不是工程材料牌号。
-
 ```bash
 go get github.com/unitedrhino/docling
 ```
@@ -168,6 +164,31 @@ chunks := docling.HierarchicalChunks(doc)                   // 官方语义层�
 md := doc.ToMarkdown()
 html := doc.ToHTML()
 ```
+
+### GLB：提取模型信息
+
+GLB 2.0 可走同一解析入口，输出 Markdown、Docling JSON 和 content_list。场景、节点、网格、渲染材质分别组织成章节；节点父子关系、名称和文件已有的自定义属性进入可检索正文。
+
+```go
+// data 是已读取的 GLB 文件字节；统一入口会补齐文件名、MIME 和来源哈希。
+doc, err := docling.ParseByExt("设备.glb", data)
+if err != nil {
+    return err
+}
+
+// 可阅读的模型信息，以及按对象章节组织的知识库切片。
+md := doc.ToMarkdown()
+items := docling.ToContentList(doc, docling.SourceGolight)
+chunks := docling.ChunkContentList(items, docling.ContentChunkOptions{})
+```
+
+对象名称同时带索引，如 `节点[1] 电机`；属性正文保留 `#/nodes/1/extras` 等 JSON 指针，切片保留对应章节路径。即使节点重名，也能回到原模型核对。设备编号等大整数保持原始 JSON 精度。
+
+输入上限为 **128 MiB**，其中 JSON 块最多 **16 MiB**、节点最多 **10,000** 个。当前提取结构与已有属性，不加载外部几何/纹理资源、不解码压缩网格、不生成三维预览，也不根据外观推测尺寸、型号、工程材料或 BOM。
+
+结构、属性精度、统一输出和非法引用处理由 `glb_test.go` 验证；另外已使用标准二进制样本 BoxVertexColors 和 OrientationTest 核验 CLI 的三种输出。上述验证不代表完整几何兼容性验收。
+
+GLB 支持已在当前开发分支实现，尚未发版；正式使用前需升级到包含该能力的 docling 版本，现有 v1.4.0 不含此功能。
 
 ### 挂载大模型:现代混合解析
 
@@ -208,6 +229,9 @@ go install github.com/unitedrhino/docling/cmd/docling@latest
 
 # 渐进式:先看结构地图(章节树/表格/图片,几百字节)
 docling parse report.pdf --format outline
+# GLB 模型结构与属性：可阅读正文或知识库内容列表
+docling parse equipment.glb --format md
+docling parse equipment.glb --format content-list --out model.content-list.json
 # 通读全文,或按章节精取
 docling parse report.pdf --format md
 docling parse report.pdf --format md --section 第四章
@@ -425,6 +449,7 @@ docling/
 ├── pdf*.go              # PDF:文本/布局/表格/视觉路由/图片编排
 ├── docx*.go pptx.go sheet.go # Word / PPT / Excel 解析
 ├── html.go markdown.go asciidoc.go eml.go image.go text.go table.go cad.go
+├── glb.go               # GLB 2.0 模型结构、已有属性与节点来源
 ├── internal/pdfenc/     # PDF 字节编码层:ToUnicode/CMap/SFNT 恢复、JPX/JBIG2 解码、软蒙版 alpha
 ├── internal/ooxml/      # Strict OOXML → Transitional 归一化
 ├── examples/            # 各格式样例源文件 ↔ Markdown 期望输出对照集
