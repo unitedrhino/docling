@@ -16,7 +16,7 @@
 
 | 痛点 | docling(Go)的答案 |
 |------|---------------------|
-| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:14 种格式一个入口、一套 API,输出对齐官方协议 |
+| 文档格式异构:PDF、Office、网页、邮件、图片各有一套解析栈,拼起来维护成本极高 | 统一 DoclingDocument 模型:多种格式一个入口、一套 API,输出对齐官方协议 |
 | 现有高质方案(Python 模型管线)部署重:Python 服务 + 数 GB 布局/表格模型,批量入库、CI、边缘节点很难落地 | 纯 Go 单二进制,`go get` 即用,毫秒~秒级解析,零外部服务 |
 | 全靠模型太贵太慢,全靠规则质量有上限 | 混合架构:规则引擎保底,扫描件/图片表格/公式密集页按质量信号自动路由给大模型——模型只用在刀刃上 |
 | 模型转写会"幻觉"改数据,入库结果不可信 | 不伪造结果:图表数据从文档自带缓存精确还原,规则不确定的内容保留原始信号并明示,而非猜一个 |
@@ -97,9 +97,9 @@ xychart-beta
 | 输入格式 | docling(Go) | Python Docling |
 |----------|--------------|-----------------|
 | PDF | ✅ | ✅ |
-| Word (DOCX) | ✅ | ✅ |
+| Word (DOC/DOCX) | ✅（DOC 提取段落文字） | ✅ |
 | PPT (PPTX) | ✅ | ✅ |
-| Excel (XLSX) / CSV | ✅ | ✅ |
+| Excel (BIFF8 XLS/XLSX) / CSV | ✅（XLS 使用公式缓存值） | ✅ |
 | HTML | ✅ | ✅ |
 | Markdown | ✅ | ✅ |
 | AsciiDoc | ✅ | ❌ |
@@ -109,7 +109,8 @@ xychart-beta
 | 纯文本 | ✅ | ✅ |
 | Docling JSON(回读) | ✅ | ✅ |
 | 音频转写(WAV/MP3 ASR) | ❌ 规划中 | ✅ |
-| EPUB / Apple Pages | ❌ 规划中 | ✅ |
+| EPUB / CHM | ✅（按章节或主题页提取） | ✅ |
+| Apple Pages | ❌ 规划中 | ✅ |
 | XML(XBRL/JATS/USPTO)/ usda | ❌ 规划中 | ✅ |
 | LaTeX | ❌ 规划中 | ✅ |
 | ZIP 压缩包 | ❌ | ✅ |
@@ -135,8 +136,11 @@ xychart-beta
 | 按扩展名自动分发 | `ParseByExt` / `ParseByExtWithOptions` | 不知道格式时的首选入口;自动补齐文档名、MIME、SHA-256 哈希与 origin |
 | PDF | `ParsePDF` / `ParsePDFWithOptions` | 坐标归一化、词/行 bbox、字体恢复、内嵌位图、表格、跨页续表、递归 XY-cut;可选 Poppler、OCR 与视觉 Hook |
 | Word | `ParseDocx` | Transitional/Strict OOXML、批注回复链、脚注/尾注、修订与域、OMML 公式、图表与 SmartArt/OLE |
+| 旧版 Word | `ParseDOC` | 直接读取二进制 DOC 段落文字；不转换 DOCX，不还原表格、图片和版式 |
 | PPT | `ParsePPTX` | notes、批注回复链、母版回退、组合元素、图表与复杂 Office 对象 |
 | Excel / CSV | `ParseXLSX` / `ParseCSV` | 隐藏表、threaded comments、原始公式、透视表、图表工作表 |
+| 旧版 Excel | `ParseXLS` | Excel 97–2003 BIFF8，保留工作表与单元格值；公式取文件缓存，不计算公式；更早版本与加密文件返回错误 |
+| 电子书 / 帮助文件 | `ParseEPUB` / `ParseCHM` | EPUB 按 spine 阅读顺序、CHM 按目录主题页提取 HTML 正文 |
 | HTML | `ParseHTML` | furniture、平铺标题、图片占位、富表格 |
 | Markdown | `ParseMarkdown` | 平铺标题、图片占位、GFM 表格 |
 | AsciiDoc | `ParseAsciiDoc` | 标题树、列表、字面/源码块 |
@@ -146,6 +150,19 @@ xychart-beta
 | 图片 | `ParseImage` | PNG/JPEG/BMP/WEBP;配置 OCR 后追加识别结构 |
 | 纯文本 | `ParseText` | BOM 与控制字符清理 |
 | Docling JSON | `ParseDoclingDocument` | 解析 Docling 服务输出的 JSON |
+
+### DOC、XLS、EPUB、CHM 真实样本对照
+
+以下结果使用 [`examples/` 中固定来源的样本](examples/README.md#新增真实样本来源)，以 Apache Tika 3.2.2 的 `-t` 纯文本结果作为独立对照。新增前统一入口拒绝这四种扩展名；新增后均能输出 Markdown、DoclingDocument 和 `content_list`。词项对照仅统计大小写折叠后的英文 4 字母以上单词和 2 位以上数字的**去重集合**，用于发现明显漏文，不代表语义质量分数。
+
+| 样本 | 与 Tika 共有的词项 | 可见效果差异 |
+|------|-------------------|--------------|
+| DOC | 8/8 | 正文文字一致；当前只提取段落文字，标题级别、表格和图片不还原。 |
+| XLS | 25/25 | 工作表与数值进入结构化表格；百分比保留缓存小数（如 `0.05`），Tika 按单元格格式显示为 `5%`；不收录打印页眉页脚。 |
+| EPUB | 12/12 | 按 spine 顺序输出导航页及章节，列表转为 Markdown。 |
+| CHM | 4722/4737 | 按目录主题页输出标题、列表和正文；部分 HTML 内容被过滤，与 Tika 纯文本输出并不逐字相同。 |
+
+对照工具只在开发验证时使用；docling 的运行与构建不依赖 Java、Tika 或 cgo。
 
 ## 快速上手
 
@@ -163,6 +180,15 @@ items := docling.ToContentList(doc, docling.SourceGolight) // RAG 切片用扁�
 chunks := docling.HierarchicalChunks(doc)                   // 官方语义层级分块
 md := doc.ToMarkdown()
 html := doc.ToHTML()
+```
+
+旧版文档同样走统一入口；`examples/` 提供可直接运行的真实文件与 Markdown 对照：
+
+```bash
+docling parse examples/doc/sample.doc --format md
+docling parse examples/xls/sample.xls --format md
+docling parse examples/epub/sample.epub --format md
+docling parse examples/chm/sample.chm --format md
 ```
 
 ### GLB：提取模型信息
@@ -399,14 +425,14 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 | 维度 | anydoc(Rust) | docling(Go) |
 |------|----------------|----------------|
 | 定位 | 纯转换层:不做 OCR/chunking/图表语义 | 转换 + 结构化 + RAG 分块,一站到检索 |
-| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 14 种(强在 HTML、Markdown、AsciiDoc、EML 邮件、图片、CAD 图纸、GLB 模型、Docling JSON 回读) |
+| 格式 | 14 种(强在旧二进制 .doc/.ppt/.xls、ODF、RTF、EPUB) | 多种(HTML、Markdown、AsciiDoc、EML、图片、CAD、GLB、DOC、XLS、EPUB、CHM、Docling JSON) |
 | 输出 | 仅 GFM Markdown | Markdown / HTML / Docling JSON(无损)/ content_list + 三种分块器 |
 | PDF 深度 | 文本型直接提取;扫描件返回 Unsupported(OCR 走 Firecrawl 托管 API) | 文本型深度解析(跨页表格/多栏/字体乱码恢复/JPEG2000-JBIG2-软蒙版);扫描页可挂**自部署**大模型钩子 |
 | 图表 | 不解析图表语义 | OOXML 图表数据回填为可检索表格 + SVG 预览 |
 | 速度 | 中位 4.4ms(Office 文档,浅转换) | 论文 0.31s / 书稿 0.73s(深度解析口径,比 Python Docling 快 34~153 倍) |
 | 失败哲学 | 正确转换或大声失败(明确报错) | 不伪造结果(缺失单元格留空、不确定保留原始信号) |
 
-> 速度口径提示:4.4ms 与 0.31s 不可直接对轰——前者是 Office 文档浅转换,后者是 PDF 深度解析(表格结构/阅读顺序/字体恢复)。两者哲学相近(明确失败优于静默污染),选型看你要"最快拿到干净 Markdown"还是"结构化深度 + RAG 就绪"。旧版二进制 Office(.doc/.ppt/.xls)、ODF、RTF、EPUB 在 docling 路线图中。
+> 速度口径提示:4.4ms 与 0.31s 不可直接对轰——前者是 Office 文档浅转换,后者是 PDF 深度解析(表格结构/阅读顺序/字体恢复)。两者哲学相近(明确失败优于静默污染),选型看你要"最快拿到干净 Markdown"还是"结构化深度 + RAG 就绪"。旧版 PPT、ODF、RTF 仍在路线图中；DOC/XLS/EPUB 已支持内容提取。
 
 ## 与 Python Docling 的差距(如实说明)
 
@@ -424,7 +450,7 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 - **扫描件与图片型文档**:官方版内置 OCR 模型管线开箱即用;我们未配置 OCRHook 时对纯扫描页无法产出文字(实测 mountain/VectorApple 等图片型 PDF 只能输出图片资产)
 - **复杂版面理解**:像素级布局分割、非矩形版面、旋转扫描页(实测 ITU-T.81 标准封面为旋转扫描,需配置 PDFVisualHook 才能按正确方向读取)——官方模型管线原生处理
 - **图片内表格/公式**:官方 TableFormer 模型可直接识别图片表格;我们依赖 VisualHook 按页路由,未配置时保留几何信号不猜结果
-- **输入覆盖**:音频 ASR、EPUB、Apple Pages、XML 系列(XBRL/JATS/USPTO)、LaTeX 等官方版已支持,我们规划中
+- **输入覆盖**:音频 ASR、Apple Pages、XML 系列(XBRL/JATS/USPTO)、LaTeX 等官方版已支持,我们规划中；EPUB 已支持章节提取
 - **极端字体文档**:嵌入 CID-keyed CFF 且无映射、加密字体等无法证明字符含义的情况,官方视觉模型仍可"认出"文字,我们保留替换符
 
 ### 何时选谁

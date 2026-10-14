@@ -106,8 +106,16 @@ func parseByExtData(name string, data []byte, options ParseOptions) (*DoclingDoc
 		return ParseMarkdown(data)
 	case ".docx":
 		return ParseDocx(data)
+	case ".doc":
+		return ParseDOC(data)
 	case ".xlsx":
 		return ParseXLSX(data)
+	case ".xls":
+		return ParseXLS(data)
+	case ".epub":
+		return ParseEPUB(data)
+	case ".chm":
+		return ParseCHM(data)
 	case ".csv":
 		return ParseCSV(data)
 	case ".pdf":
@@ -191,8 +199,16 @@ func documentMIMEForExt(ext string) string {
 		return "text/markdown"
 	case ".docx":
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".doc":
+		return "application/msword"
 	case ".xlsx":
 		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".epub":
+		return "application/epub+zip"
+	case ".chm":
+		return "application/vnd.ms-htmlhelp"
 	case ".csv":
 		return "text/csv"
 	case ".pdf":
