@@ -42,6 +42,56 @@ func TestLegacyFormats(t *testing.T) {
 	}
 }
 
+// TestLegacyXLSFormatting 验证内置百分比样式和日期格式进入可读单元格值。
+func TestLegacyXLSFormatting(t *testing.T) {
+	cases := []struct {
+		name string
+		want []string
+	}{
+		{"sample.xls", []string{"5%", "6%", "4%"}},
+		{"DateFormats.xls", []string{"2007-08-10"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("examples/xls", tc.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := ParseXLS(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markdown := doc.ToMarkdown()
+			for _, want := range tc.want {
+				if !strings.Contains(markdown, want) {
+					t.Errorf("formatted XLS output missing %q", want)
+				}
+			}
+			if tc.name == "DateFormats.xls" && strings.Contains(markdown, "39304") {
+				t.Fatal("date serial leaked instead of a readable date")
+			}
+		})
+	}
+}
+
+// TestLegacyDOCExtractsTableText 验证旧版 DOC 表格单元格文字虽不保留网格结构但不会丢失。
+func TestLegacyDOCExtractsTableText(t *testing.T) {
+	data, err := os.ReadFile("examples/doc/simple-table.doc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseDOC(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := doc.Text()
+	for _, want := range []string{"Cell 1,1", "Cell 1,2", "Cell 1,3", "Cell 2,1", "Cell 2,2", "Cell 2,3", "This text is below the table."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("DOC text missing table or trailing paragraph content %q", want)
+		}
+	}
+}
+
 // TestLegacyMalformedAndOldXLS 验证空文件、损坏文件和 Excel 95 的明确错误。
 func TestLegacyMalformedAndOldXLS(t *testing.T) {
 	for _, ext := range []string{"doc", "xls", "epub", "chm"} {

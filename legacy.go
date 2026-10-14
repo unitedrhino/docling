@@ -71,7 +71,8 @@ func ParseXLS(data []byte) (*DoclingDocument, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("docling: XLS 文件为空")
 	}
-	if err := validateBIFF8(data); err != nil {
+	formatIndexes, err := validateBIFF8(data)
+	if err != nil {
 		return nil, err
 	}
 	wb, err := xls.Read(bytes.NewReader(data))
@@ -93,7 +94,7 @@ func ParseXLS(data []byte) (*DoclingDocument, error) {
 				continue
 			}
 			for col := 0; col < current.CellCount(); col++ {
-				if strings.TrimSpace(legacyXLSCellValue(current.Cell(col))) != "" {
+				if strings.TrimSpace(legacyXLSCellValue(current.Cell(col), formatIndexes)) != "" {
 					if row+1 > maxRow {
 						maxRow = row + 1
 					}
@@ -110,7 +111,7 @@ func ParseXLS(data []byte) (*DoclingDocument, error) {
 			cells := make([]DoclingTableCell, 0, maxRow*maxCol)
 			for row := 0; row < maxRow; row++ {
 				for col := 0; col < maxCol; col++ {
-					value := legacyXLSCellValue(sheet.Row(row).Cell(col))
+					value := legacyXLSCellValue(sheet.Row(row).Cell(col), formatIndexes)
 					cells = append(cells, DoclingTableCell{RowSpan: 1, ColSpan: 1, StartRowOffsetIdx: int64(row), EndRowOffsetIdx: int64(row + 1), StartColOffsetIdx: int64(col), EndColOffsetIdx: int64(col + 1), Text: value, ColumnHeader: row == 0})
 				}
 			}
@@ -121,12 +122,21 @@ func ParseXLS(data []byte) (*DoclingDocument, error) {
 	return doc, nil
 }
 
-// legacyXLSCellValue 输出单元格缓存值，并按 Excel 的 15 位有效数字去除浮点噪声。
-func legacyXLSCellValue(cell *xls.Cell) string {
+// legacyXLSCellValue 输出单元格缓存值，并还原常见内置百分比显示格式。
+func legacyXLSCellValue(cell *xls.Cell, formatIndexes []uint16) string {
 	if cell == nil {
 		return ""
 	}
 	if cell.Type == xls.CellTypeNumber || cell.Type == xls.CellTypeFormula {
+		cachedNumber, numberErr := strconv.ParseFloat(cell.Value(), 64)
+		if numberErr == nil && cell.Style != nil && cell.Style.XFIndex >= 0 && cell.Style.XFIndex < len(formatIndexes) {
+			switch formatIndexes[cell.Style.XFIndex] {
+			case 9:
+				return strconv.FormatFloat(cachedNumber*100, 'f', 0, 64) + "%"
+			case 10:
+				return strconv.FormatFloat(cachedNumber*100, 'f', 2, 64) + "%"
+			}
+		}
 		if value := cell.Float(); value != 0 || cell.Value() == "0" {
 			return strconv.FormatFloat(value, 'g', 15, 64)
 		}
@@ -134,11 +144,11 @@ func legacyXLSCellValue(cell *xls.Cell) string {
 	return cell.Value()
 }
 
-// validateBIFF8 核对 Workbook 流的 BOF 版本，并拒绝加密或更早的 Excel 文件。
-func validateBIFF8(data []byte) error {
+// validateBIFF8 核对 Workbook 流的 BIFF8 版本、加密标志和单元格数字格式索引。
+func validateBIFF8(data []byte) ([]uint16, error) {
 	container, err := mscfb.New(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("docling: XLS OLE 容器无效: %w", err)
+		return nil, fmt.Errorf("docling: XLS OLE 容器无效: %w", err)
 	}
 	var stream *mscfb.File
 	for _, entry := range container.File {
@@ -148,35 +158,43 @@ func validateBIFF8(data []byte) error {
 		}
 	}
 	if stream == nil {
-		return fmt.Errorf("docling: 仅支持 Excel 97–2003 BIFF8 XLS")
+		return nil, fmt.Errorf("docling: 仅支持 Excel 97–2003 BIFF8 XLS")
 	}
 	var header [8]byte
 	if _, err := stream.ReadAt(header[:], 0); err != nil {
-		return fmt.Errorf("docling: XLS Workbook 流不完整: %w", err)
+		return nil, fmt.Errorf("docling: XLS Workbook 流不完整: %w", err)
 	}
 	if binary.LittleEndian.Uint16(header[:2]) != 0x0809 || binary.LittleEndian.Uint16(header[4:6]) != 0x0600 {
-		return fmt.Errorf("docling: 仅支持 Excel 97–2003 BIFF8 XLS")
+		return nil, fmt.Errorf("docling: 仅支持 Excel 97–2003 BIFF8 XLS")
 	}
 	// FILEPASS 出现在工作簿全局记录内；加密内容不交给普通 BIFF8 解析器。
+	var formatIndexes []uint16
 	for offset := int64(0); offset+4 <= stream.Size && offset < 1<<20; {
 		var record [4]byte
 		if _, err := stream.ReadAt(record[:], offset); err != nil {
-			return fmt.Errorf("docling: XLS 记录头不完整: %w", err)
+			return nil, fmt.Errorf("docling: XLS 记录头不完整: %w", err)
 		}
 		kind := binary.LittleEndian.Uint16(record[:2])
 		size := int64(binary.LittleEndian.Uint16(record[2:]))
 		if kind == 0x002f {
-			return fmt.Errorf("docling: 不支持加密 XLS")
+			return nil, fmt.Errorf("docling: 不支持加密 XLS")
 		}
 		if kind == 0x000a {
 			break
 		}
+		if kind == 0x00e0 && size >= 4 {
+			var xf [4]byte
+			if _, err := stream.ReadAt(xf[:], offset+4); err != nil {
+				return nil, fmt.Errorf("docling: XLS 单元格格式记录不完整: %w", err)
+			}
+			formatIndexes = append(formatIndexes, binary.LittleEndian.Uint16(xf[2:4]))
+		}
 		offset += 4 + size
 		if offset > stream.Size {
-			return fmt.Errorf("docling: XLS 记录越界")
+			return nil, fmt.Errorf("docling: XLS 记录越界")
 		}
 	}
-	return nil
+	return formatIndexes, nil
 }
 
 // ParseEPUB 按 EPUB spine 顺序提取 XHTML 章节及其标题和正文。
