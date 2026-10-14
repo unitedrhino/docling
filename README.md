@@ -8,6 +8,33 @@
 
 > 命名说明:本仓库是 [Docling](https://github.com/docling-project/docling) 协议的纯 Go 实现,Go 包名为 `docling`,与 Python 官方实现共享同一文档模型。
 
+## 支持的输入格式与解析范围
+
+| 输入类型 | 支持范围与说明 |
+|----------|----------------|
+| PDF | 文本、页面结构与表格；扫描页可配置 OCR/视觉 Hook。 |
+| Word | `.doc`、`.docx`；旧版 `.doc` 提取段落和单元格文字，不还原完整表格边界、图片或版式。 |
+| 演示文稿 | `.pptx`；不支持旧版二进制 `.ppt`。 |
+| 表格与数据 | `.xls`（Excel 97–2003 BIFF8）、`.xlsx`、`.csv`；旧版 XLS 使用缓存值，不计算公式，常见内置日期/百分比样式可识别。 |
+| 电子书与帮助文件 | `.epub` 按 spine 阅读顺序提取章节；`.chm` 按目录主题页提取 HTML 正文。 |
+| 网页与邮件 | HTML、Markdown、AsciiDoc、EML。 |
+| CAD 图纸 | DWG（R9–R2018）及 ASCII/二进制 DXF；按图框拆页并提取图框文字。 |
+| 三维模型 | GLB 2.0；提取场景、节点、网格、材质及已有属性，不渲染几何或推测工程参数。 |
+| 图片 | PNG、JPEG、BMP、WEBP、SVG；栅格图片可选配 OCR。 |
+| 其他 | 纯文本及 DoclingDocument JSON 回读。 |
+
+## 输出格式与用途
+
+| 输出 | 内容与适用场景 | API / CLI |
+|------|----------------|-----------|
+| Markdown | 适合阅读、检索和直接写入知识库；标题、列表、表格等转为 Markdown。 | `ToMarkdown` / `--format md` |
+| HTML | 保留结构化文档的网页展示形式。 | `ToHTML` |
+| DoclingDocument JSON | Docling Core 1.10 文档模型，包含正文树及页面、来源等结构化信息，适合系统间交换。 | `--format json` |
+| `content_list` JSON | 将文档树展平为检索条目并保留类型、层级等元数据，适合知识库切片与向量化。 | `ToContentList` / `--format content-list` |
+| Outline | 按章节快速查看文档结构；CLI 默认输出。 | `--format outline` |
+
+另外提供 Hierarchical/Hybrid 分块器及知识库分块策略；它们输出分块结果，不是另一种文档序列化格式。
+
 ## 为什么开发这个库
 
 一句话:**让任何文档都能被大模型可靠地读懂——不拖一台 Python 模型服务下水。**
