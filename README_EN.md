@@ -4,9 +4,36 @@ English | [简体中文](README.md)
 
 > Feed any document to your LLM — a single pure-Go binary, 1–2 orders of magnitude faster, with optional LLM enhancement for the hard pages.
 
-`docling` converts PDF, Word, PPT, Excel/CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text, CAD drawings (DWG/DXF) and GLB 3D models into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
+`docling` converts PDF, DOC/DOCX, PPTX, BIFF8 XLS/XLSX, EPUB, CHM, CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text, CAD drawings (DWG/DXF) and GLB 2.0 3D models into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
 
 > Naming note: this repository is a pure-Go implementation of the [Docling](https://github.com/docling-project/docling) protocol. The Go package is named `docling` and shares the same document model as the Python reference implementation.
+
+## Supported input formats and scope
+
+| Input type | Supported scope |
+|------------|-----------------|
+| PDF | Text, page structure and tables; OCR/vision hooks can be configured for scanned pages. |
+| Word | `.doc`, `.docx`; legacy `.doc` extracts paragraph and cell text without reconstructing full table boundaries, images or layout. |
+| Presentations | `.pptx`; legacy binary `.ppt` is not supported. |
+| Spreadsheets and data | `.xls` (Excel 97–2003 BIFF8), `.xlsx`, `.csv`; legacy XLS reads cached values, does not calculate formulas, and recognizes common built-in date/percentage styles. |
+| Ebooks and help files | `.epub` chapters in spine reading order; `.chm` HTML topics in table-of-contents order. |
+| Web and email | HTML, Markdown, AsciiDoc, EML. |
+| CAD drawings | DWG (R9–R2018) and ASCII/binary DXF; splits by drawing frame and extracts frame text. |
+| 3D models | GLB 2.0 scenes, nodes, meshes, materials and existing properties; no geometry rendering or engineering inference. |
+| Images | PNG, JPEG, BMP, WEBP and SVG; OCR can be configured for raster images. |
+| Other | Plain text and DoclingDocument JSON read-back. |
+
+## Output formats and use cases
+
+| Output | Content and use | API / CLI |
+|--------|----------------|-----------|
+| Markdown | Readable text for search and knowledge bases, with headings, lists and tables converted to Markdown. | `ToMarkdown` / `--format md` |
+| HTML | Web-friendly rendering of the structured document. | `ToHTML` |
+| DoclingDocument JSON | Docling Core 1.10 document model with body tree, page and source structure for system-to-system exchange. | `--format json` |
+| `content_list` JSON | Flattens the document tree into retrieval items while keeping type and hierarchy metadata for chunking and embedding. | `ToContentList` / `--format content-list` |
+| Outline | Quick view of document structure; the CLI default. | `--format outline` |
+
+Hierarchical/Hybrid chunkers and knowledge-base chunking strategies are also available; they return chunks rather than another document serialization format.
 
 ## Why this library exists
 
@@ -117,6 +144,7 @@ xychart-beta
 | AsciiDoc | ✅ | ❌ |
 | EML email | ✅ | ✅ (also MSG) |
 | CAD drawings (DWG R9–R2018 / DXF) | ✅ (smart sheet split, one page per frame) | ❌ |
+| GLB 3D models (GLB 2.0) | ✅ (scenes, nodes, meshes, materials and existing properties; no geometry rendering) | ❌ |
 | Images PNG/JPEG/BMP/WEBP | ✅ | ✅ (also TIFF) |
 | Plain text | ✅ | ✅ |
 | Docling JSON (read back) | ✅ | ✅ |
@@ -447,7 +475,7 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 conversion, the latter deep PDF parsing (table structure / reading order / font recovery). The
 philosophies are close (loud failure beats silent pollution); pick "fastest clean Markdown" or
 "structural depth + RAG readiness" accordingly. Legacy PPT, ODF and RTF remain on
-docling's roadmap; DOC, XLS and EPUB now support content extraction.
+docling's roadmap; DOC, XLS, EPUB and CHM now support content extraction.
 
 ## Gaps vs Python Docling (stated honestly)
 

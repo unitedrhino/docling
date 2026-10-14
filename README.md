@@ -4,9 +4,36 @@
 
 > 把任何文档喂给你的大模型 —— 纯 Go 单二进制,快 1~2 个数量级,复杂页可挂大模型增强。
 
-`docling` 将 PDF、Word、PPT、Excel/CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本、CAD 图纸(DWG/DXF)与 GLB 三维模型解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
+`docling` 将 PDF、DOC/DOCX、PPTX、BIFF8 XLS/XLSX、EPUB、CHM、CSV、HTML、Markdown、AsciiDoc、EML 邮件、图片、纯文本、CAD 图纸(DWG/DXF)与 GLB 2.0 三维模型解析为统一的 **DoclingDocument** 结构化模型(对齐 Docling Core `1.10.0` 官方协议),为 RAG 切片、向量化和 Agent 工具链提供开箱即用的文档摄入层。
 
 > 命名说明:本仓库是 [Docling](https://github.com/docling-project/docling) 协议的纯 Go 实现,Go 包名为 `docling`,与 Python 官方实现共享同一文档模型。
+
+## 支持的输入格式与解析范围
+
+| 输入类型 | 支持范围与说明 |
+|----------|----------------|
+| PDF | 文本、页面结构与表格；扫描页可配置 OCR/视觉 Hook。 |
+| Word | `.doc`、`.docx`；旧版 `.doc` 提取段落和单元格文字，不还原完整表格边界、图片或版式。 |
+| 演示文稿 | `.pptx`；不支持旧版二进制 `.ppt`。 |
+| 表格与数据 | `.xls`（Excel 97–2003 BIFF8）、`.xlsx`、`.csv`；旧版 XLS 使用缓存值，不计算公式，常见内置日期/百分比样式可识别。 |
+| 电子书与帮助文件 | `.epub` 按 spine 阅读顺序提取章节；`.chm` 按目录主题页提取 HTML 正文。 |
+| 网页与邮件 | HTML、Markdown、AsciiDoc、EML。 |
+| CAD 图纸 | DWG（R9–R2018）及 ASCII/二进制 DXF；按图框拆页并提取图框文字。 |
+| 三维模型 | GLB 2.0；提取场景、节点、网格、材质及已有属性，不渲染几何或推测工程参数。 |
+| 图片 | PNG、JPEG、BMP、WEBP、SVG；栅格图片可选配 OCR。 |
+| 其他 | 纯文本及 DoclingDocument JSON 回读。 |
+
+## 输出格式与用途
+
+| 输出 | 内容与适用场景 | API / CLI |
+|------|----------------|-----------|
+| Markdown | 适合阅读、检索和直接写入知识库；标题、列表、表格等转为 Markdown。 | `ToMarkdown` / `--format md` |
+| HTML | 保留结构化文档的网页展示形式。 | `ToHTML` |
+| DoclingDocument JSON | Docling Core 1.10 文档模型，包含正文树及页面、来源等结构化信息，适合系统间交换。 | `--format json` |
+| `content_list` JSON | 将文档树展平为检索条目并保留类型、层级等元数据，适合知识库切片与向量化。 | `ToContentList` / `--format content-list` |
+| Outline | 按章节快速查看文档结构；CLI 默认输出。 | `--format outline` |
+
+另外提供 Hierarchical/Hybrid 分块器及知识库分块策略；它们输出分块结果，不是另一种文档序列化格式。
 
 ## 为什么开发这个库
 
@@ -105,6 +132,7 @@ xychart-beta
 | AsciiDoc | ✅ | ❌ |
 | EML 邮件 | ✅ | ✅(另支持 MSG) |
 | CAD 图纸(DWG R9~R2018 / DXF) | ✅(智能拆图,每图框一页) | ❌ |
+| GLB 三维模型(GLB 2.0) | ✅(场景、节点、网格、材质与已有属性；不渲染几何) | ❌ |
 | 图片 PNG/JPEG/BMP/WEBP | ✅ | ✅(另支持 TIFF) |
 | 纯文本 | ✅ | ✅ |
 | Docling JSON(回读) | ✅ | ✅ |
@@ -434,7 +462,7 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 | 速度 | 中位 4.4ms(Office 文档,浅转换) | 论文 0.31s / 书稿 0.73s(深度解析口径,比 Python Docling 快 34~153 倍) |
 | 失败哲学 | 正确转换或大声失败(明确报错) | 不伪造结果(缺失单元格留空、不确定保留原始信号) |
 
-> 速度口径提示:4.4ms 与 0.31s 不可直接对轰——前者是 Office 文档浅转换,后者是 PDF 深度解析(表格结构/阅读顺序/字体恢复)。两者哲学相近(明确失败优于静默污染),选型看你要"最快拿到干净 Markdown"还是"结构化深度 + RAG 就绪"。旧版 PPT、ODF、RTF 仍在路线图中；DOC/XLS/EPUB 已支持内容提取。
+> 速度口径提示:4.4ms 与 0.31s 不可直接对轰——前者是 Office 文档浅转换,后者是 PDF 深度解析(表格结构/阅读顺序/字体恢复)。两者哲学相近(明确失败优于静默污染),选型看你要"最快拿到干净 Markdown"还是"结构化深度 + RAG 就绪"。旧版 PPT、ODF、RTF 仍在路线图中；DOC/XLS/EPUB/CHM 已支持内容提取。
 
 ## 与 Python Docling 的差距(如实说明)
 
@@ -452,7 +480,7 @@ fmt.Println(md) // 公式 LaTeX、SmartArt 流程 SVG、艺术字与 OLE 分类�
 - **扫描件与图片型文档**:官方版内置 OCR 模型管线开箱即用;我们未配置 OCRHook 时对纯扫描页无法产出文字(实测 mountain/VectorApple 等图片型 PDF 只能输出图片资产)
 - **复杂版面理解**:像素级布局分割、非矩形版面、旋转扫描页(实测 ITU-T.81 标准封面为旋转扫描,需配置 PDFVisualHook 才能按正确方向读取)——官方模型管线原生处理
 - **图片内表格/公式**:官方 TableFormer 模型可直接识别图片表格;我们依赖 VisualHook 按页路由,未配置时保留几何信号不猜结果
-- **输入覆盖**:音频 ASR、Apple Pages、XML 系列(XBRL/JATS/USPTO)、LaTeX 等官方版已支持,我们规划中；EPUB 已支持章节提取
+- **输入覆盖**:DOC、XLS、EPUB、CHM 已支持内容提取；音频 ASR、Apple Pages、XML 系列(XBRL/JATS/USPTO)、LaTeX 等官方版已支持,我们规划中
 - **极端字体文档**:嵌入 CID-keyed CFF 且无映射、加密字体等无法证明字符含义的情况,官方视觉模型仍可"认出"文字,我们保留替换符
 
 ### 何时选谁
