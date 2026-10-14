@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 > Feed any document to your LLM — a single pure-Go binary, 1–2 orders of magnitude faster, with optional LLM enhancement for the hard pages.
 
-`docling` converts PDF, Word, PPT, Excel/CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text, CAD drawings (DWG/DXF) and GLB 3D models into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
+`docling` converts PDF, DOC/DOCX, PPTX, BIFF8 XLS/XLSX, EPUB, CHM, CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text, CAD drawings (DWG/DXF) and GLB 2.0 3D models into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
 
 > Naming note: this repository is a pure-Go implementation of the [Docling](https://github.com/docling-project/docling) protocol. The Go package is named `docling` and shares the same document model as the Python reference implementation.
 
@@ -117,6 +117,7 @@ xychart-beta
 | AsciiDoc | ✅ | ❌ |
 | EML email | ✅ | ✅ (also MSG) |
 | CAD drawings (DWG R9–R2018 / DXF) | ✅ (smart sheet split, one page per frame) | ❌ |
+| GLB 3D models (GLB 2.0) | ✅ (scenes, nodes, meshes, materials and existing properties; no geometry rendering) | ❌ |
 | Images PNG/JPEG/BMP/WEBP | ✅ | ✅ (also TIFF) |
 | Plain text | ✅ | ✅ |
 | Docling JSON (read back) | ✅ | ✅ |
@@ -447,7 +448,7 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 conversion, the latter deep PDF parsing (table structure / reading order / font recovery). The
 philosophies are close (loud failure beats silent pollution); pick "fastest clean Markdown" or
 "structural depth + RAG readiness" accordingly. Legacy PPT, ODF and RTF remain on
-docling's roadmap; DOC, XLS and EPUB now support content extraction.
+docling's roadmap; DOC, XLS, EPUB and CHM now support content extraction.
 
 ## Gaps vs Python Docling (stated honestly)
 
