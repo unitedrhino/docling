@@ -148,10 +148,10 @@ xychart-beta
 | Auto-detect by extension | `ParseByExt` / `ParseByExtWithOptions` | Preferred entry when the format is unknown; fills in name, MIME, SHA-256 hash and origin |
 | PDF | `ParsePDF` / `ParsePDFWithOptions` | Coordinate normalization, word/line bboxes, font recovery, embedded bitmaps, tables, cross-page merging, recursive XY-cut; optional Poppler, OCR and vision hooks |
 | Word | `ParseDocx` | Transitional/Strict OOXML, comment threads, footnotes/endnotes, tracked changes & fields, OMML formulas, charts and SmartArt/OLE |
-| Legacy Word | `ParseDOC` | Extracts paragraph text directly from binary DOC; no DOCX conversion or layout reconstruction |
+| Legacy Word | `ParseDOC` | Extracts paragraph and table cell text directly from binary DOC; table boundaries, headings, images and layout are not reconstructed |
 | PPT | `ParsePPTX` | Notes, comment threads, layout/master fallback, grouped shapes, charts and complex Office objects |
 | Excel / CSV | `ParseXLSX` / `ParseCSV` | Hidden sheets, threaded comments, raw formulas, pivot tables, chart sheets |
-| Legacy Excel | `ParseXLS` | Excel 97–2003 BIFF8 sheets and cached cell values; no formula recalculation |
+| Legacy Excel | `ParseXLS` | Excel 97–2003 BIFF8 sheets and cached cell values; common built-in percentage formats are rendered, dates are normalized to ISO; custom number formats are not fully emulated and formulas are not recalculated |
 | Ebooks / help files | `ParseEPUB` / `ParseCHM` | EPUB spine order and CHM HTML topic extraction |
 | HTML | `ParseHTML` | Furniture, flattened headings, image placeholders, rich tables |
 | Markdown | `ParseMarkdown` | Flattened headings, image placeholders, GFM tables |
