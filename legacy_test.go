@@ -61,4 +61,11 @@ func TestLegacyMalformedAndOldXLS(t *testing.T) {
 	if _, err := ParseXLS(data); err == nil || !strings.Contains(err.Error(), "BIFF8") {
 		t.Fatalf("Excel 95 should be rejected as unsupported: %v", err)
 	}
+	encrypted, err := os.ReadFile("testdata/legacy/encrypted.doc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDOC(encrypted); err == nil || !strings.Contains(err.Error(), "加密 DOC") {
+		t.Fatalf("encrypted Word document should have a clear error: %v", err)
+	}
 }

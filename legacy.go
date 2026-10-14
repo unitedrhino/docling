@@ -24,6 +24,9 @@ func ParseDOC(data []byte) (*DoclingDocument, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("docling: DOC 文件为空")
 	}
+	if err := validateDOCEncryption(data); err != nil {
+		return nil, err
+	}
 	reader, err := word.ParseDoc(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("docling: 解析 DOC 失败: %w", err)
@@ -39,6 +42,28 @@ func ParseDOC(data []byte) (*DoclingDocument, error) {
 		}
 	}
 	return doc, nil
+}
+
+// validateDOCEncryption 根据 Word FIB 标记识别受密码保护的二进制 DOC。
+func validateDOCEncryption(data []byte) error {
+	container, err := mscfb.New(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("docling: DOC OLE 容器无效: %w", err)
+	}
+	for _, entry := range container.File {
+		if entry.Name != "WordDocument" {
+			continue
+		}
+		var fib [12]byte
+		if _, err := entry.ReadAt(fib[:], 0); err != nil {
+			return fmt.Errorf("docling: DOC 文件头不完整: %w", err)
+		}
+		if binary.LittleEndian.Uint16(fib[10:12])&0x0100 != 0 {
+			return fmt.Errorf("docling: 不支持加密 DOC")
+		}
+		return nil
+	}
+	return fmt.Errorf("docling: DOC 缺少 WordDocument 内容流")
 }
 
 // ParseXLS 读取 BIFF8 工作簿的工作表和缓存单元格值；不重新计算公式。
