@@ -50,6 +50,7 @@ go test ./... -run TestExamplesGolden -update    # 解析行为变化后重建�
 | `epub/sample.epub` | [W3C EPUB 测试 `nav-spine_in-spine.epub`](https://w3c.github.io/epub-tests/tests/nav-spine_in-spine.epub)，源仓版本 `54092b4233253e9aac80e93ec4782b380b4b3403` | `1a0adf78e0a79fe9079a4c8f70ac239e5f98fb2ff7ba994eec3bea0e70c569da` | [W3C Software and Document License](https://github.com/w3c/epub-tests/blob/main/LICENSE.md) |
 | `chm/sample.chm` | [pylibmspack `sample.chm`](https://github.com/bwhitn/pylibmspack/blob/3cf1091492467ec100f0435e786eb29136ffc080/tests/fixtures/sample.chm) | `3ab384cdc93ff8fab8eb518f39af50d0cf1d5784a31d05e31a6328a72cf435e7` | NSIS 文档，zlib/libpng 许可，见来源仓 README |
 | `../testdata/legacy/biff5.xls` | [Apache POI `testEXCEL_95.xls`](https://github.com/apache/poi/blob/18d4128d956f9436bfe06c10cfdd457fca6a61de/test-data/spreadsheet/testEXCEL_95.xls) | `ac0ce3a2eff43e32e56d6b789df6aaa1645ae846d22fa3a2fe3057391d0f1cae` | Apache POI 仓库 `legal/LICENSE`（Apache-2.0） |
+| `../testdata/legacy/encrypted.doc` | [Apache POI `PasswordProtected.doc`](https://github.com/apache/poi/blob/18d4128d956f9436bfe06c10cfdd457fca6a61de/test-data/document/PasswordProtected.doc) | `863d2216a6f5bb4cec0ea4131a05ae0822dbce347e2940155ef638c6d64935fe` | Apache POI 仓库 `legal/LICENSE`（Apache-2.0） |
 
 ## 新增格式样例
 
