@@ -17,7 +17,7 @@ Before feeding documents to an LLM/RAG pipeline, four questions must be answered
 
 | Pain point | docling (Go)'s answer |
 |------------|------------------------|
-| Heterogeneous formats: PDF, Office, web, email and images each need their own parsing stack, and stitching them together is expensive to maintain | One unified DoclingDocument model: 14 formats, one entry point, one API, aligned with the official protocol |
+| Heterogeneous formats: PDF, Office, web, email and images each need their own parsing stack, and stitching them together is expensive to maintain | One unified DoclingDocument model: multiple formats, one entry point, one API, aligned with the official protocol |
 | High-quality options (Python model pipelines) are heavy: a Python service plus multi-GB layout/table models — hard to run for bulk ingestion, CI and edge nodes | Pure Go, single binary, `go get` and go; millisecond-to-second parsing with zero external services |
 | All-model is slow and costly; all-rules caps the quality | Hybrid architecture: a rule-engine baseline, with scanned pages, image tables and formula-dense pages auto-routed to your LLM by quality signals — the model is spent only where it matters |
 | Model transcription "hallucinates" data, so ingested results cannot be trusted | Never fabricate: chart data is restored exactly from the document's own caches; content the rules cannot determine keeps its raw signal explicitly instead of a guess |
@@ -109,9 +109,9 @@ xychart-beta
 | Input format | docling (Go) | Python Docling |
 |--------------|--------------|-----------------|
 | PDF | ✅ | ✅ |
-| Word (DOCX) | ✅ | ✅ |
+| Word (DOC/DOCX) | ✅ (DOC text extraction) | ✅ |
 | PPT (PPTX) | ✅ | ✅ |
-| Excel (XLSX) / CSV | ✅ | ✅ |
+| Excel (BIFF8 XLS/XLSX) / CSV | ✅ (XLS cached values) | ✅ |
 | HTML | ✅ | ✅ |
 | Markdown | ✅ | ✅ |
 | AsciiDoc | ✅ | ❌ |
@@ -121,7 +121,8 @@ xychart-beta
 | Plain text | ✅ | ✅ |
 | Docling JSON (read back) | ✅ | ✅ |
 | Audio transcription (WAV/MP3 ASR) | ❌ planned | ✅ |
-| EPUB / Apple Pages | ❌ planned | ✅ |
+| EPUB / CHM | ✅ (chapter/topic extraction) | ✅ |
+| Apple Pages | ❌ planned | ✅ |
 | XML (XBRL/JATS/USPTO) / usda | ❌ planned | ✅ |
 | LaTeX | ❌ planned | ✅ |
 | ZIP archives | ❌ | ✅ |
@@ -147,8 +148,11 @@ xychart-beta
 | Auto-detect by extension | `ParseByExt` / `ParseByExtWithOptions` | Preferred entry when the format is unknown; fills in name, MIME, SHA-256 hash and origin |
 | PDF | `ParsePDF` / `ParsePDFWithOptions` | Coordinate normalization, word/line bboxes, font recovery, embedded bitmaps, tables, cross-page merging, recursive XY-cut; optional Poppler, OCR and vision hooks |
 | Word | `ParseDocx` | Transitional/Strict OOXML, comment threads, footnotes/endnotes, tracked changes & fields, OMML formulas, charts and SmartArt/OLE |
+| Legacy Word | `ParseDOC` | Extracts paragraph text directly from binary DOC; no DOCX conversion or layout reconstruction |
 | PPT | `ParsePPTX` | Notes, comment threads, layout/master fallback, grouped shapes, charts and complex Office objects |
 | Excel / CSV | `ParseXLSX` / `ParseCSV` | Hidden sheets, threaded comments, raw formulas, pivot tables, chart sheets |
+| Legacy Excel | `ParseXLS` | Excel 97–2003 BIFF8 sheets and cached cell values; no formula recalculation |
+| Ebooks / help files | `ParseEPUB` / `ParseCHM` | EPUB spine order and CHM HTML topic extraction |
 | HTML | `ParseHTML` | Furniture, flattened headings, image placeholders, rich tables |
 | Markdown | `ParseMarkdown` | Flattened headings, image placeholders, GFM tables |
 | AsciiDoc | `ParseAsciiDoc` | Heading tree, lists, literal/source blocks |
@@ -432,7 +436,7 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 | Dimension | anydoc (Rust) | docling (Go) |
 |-----------|----------------|----------------|
 | Positioning | Pure conversion: no OCR, no chunking, no chart semantics | Conversion + structure + RAG chunking, one stop to retrieval |
-| Formats | 14 (strong on legacy binary .doc/.ppt/.xls, ODF, RTF, EPUB) | 14 (strong on HTML, Markdown, AsciiDoc, EML email, images, CAD drawings, GLB models, Docling JSON read-back) |
+| Formats | 14 (strong on legacy binary .doc/.ppt/.xls, ODF, RTF, EPUB) | Multiple (HTML, Markdown, AsciiDoc, EML, images, CAD, GLB, DOC, XLS, EPUB, CHM and Docling JSON) |
 | Output | GFM Markdown only | Markdown / HTML / Docling JSON (lossless) / content_list + three chunkers |
 | PDF depth | Text PDFs extracted directly; scans rejected with Unsupported (OCR via Firecrawl's hosted API) | Deep text-PDF parsing (cross-page tables / multi-column / font recovery / JPEG2000-JBIG2-soft masks); scanned pages route to **self-hosted** LLM hooks |
 | Charts | No chart semantics | OOXML chart data backfilled as searchable tables + SVG previews |
@@ -442,8 +446,8 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 > A note on speed: 4.4ms vs 0.31s is not apples-to-apples — the former is shallow Office-doc
 conversion, the latter deep PDF parsing (table structure / reading order / font recovery). The
 philosophies are close (loud failure beats silent pollution); pick "fastest clean Markdown" or
-"structural depth + RAG readiness" accordingly. Legacy binary Office, ODF, RTF and EPUB are on
-docling's roadmap.
+"structural depth + RAG readiness" accordingly. Legacy PPT, ODF and RTF remain on
+docling's roadmap; DOC, XLS and EPUB now support content extraction.
 
 ## Gaps vs Python Docling (stated honestly)
 
@@ -474,7 +478,7 @@ HierarchicalChunker/HybridChunker; on parsing quality the gaps are explicit:
   read in the right orientation) — native to the model pipeline
 - **Tables/formulas inside images**: TableFormer recognizes image tables directly; we route
   such pages through the VisualHook, and without it we keep geometric signals rather than guess
-- **Input coverage**: audio ASR, EPUB, Apple Pages, XML families (XBRL/JATS/USPTO) and LaTeX are
+- **Input coverage**: audio ASR, Apple Pages, XML families (XBRL/JATS/USPTO) and LaTeX are
   supported by the original and still on our roadmap
 - **Extreme fonts**: for embedded CID-keyed CFF without mappings or encrypted fonts, the
   original's vision model can still "read" the text; we keep replacement characters

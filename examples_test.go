@@ -50,6 +50,10 @@ func examplesSources() []examplesSource {
 		{dir: "xlsx", filename: "rich-chart.xlsx", build: buildRichExampleXLSX},
 		{dir: "pptx", filename: "sample.pptx", build: buildExamplePPTXGolden},
 		{dir: "pptx", filename: "rich.pptx", build: buildRichExamplePPTX},
+		{dir: "doc", filename: "sample.doc"},
+		{dir: "xls", filename: "sample.xls"},
+		{dir: "epub", filename: "sample.epub"},
+		{dir: "chm", filename: "sample.chm"},
 	}
 }
 
@@ -79,7 +83,7 @@ func TestExamplesGolden(t *testing.T) {
 				path := filepath.Join(dir, source.filename)
 				_, statErr := os.Stat(path)
 				isCanonical := strings.HasPrefix(source.filename, "sample.")
-				if isCanonical || os.IsNotExist(statErr) {
+				if source.build != nil && (isCanonical || os.IsNotExist(statErr)) {
 					if err := os.WriteFile(path, source.build(t), 0o644); err != nil {
 						t.Fatalf("write sample source: %v", err)
 					}
