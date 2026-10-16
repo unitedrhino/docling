@@ -6,13 +6,15 @@
 // Identity-H 字体只能按单字节 PDFDocEncoding 降级，中文会变成替换符；其
 // bfrange 连续映射也无法跨字节进位。本文件在原坐标提取质量不足时执行第二条
 // 只读路径：优先解析完整 ToUnicode CMap，缺失时通过 CIDToGIDMap 与嵌入
-// TrueType/OpenType cmap 反推 Unicode。恢复结果没有可靠逐字坐标，因此只在
-// 乱码显著减少时作为无坐标文本兜底，并继续触发可选结构化视觉恢复版面。
+// TrueType/OpenType cmap 反推 Unicode。恢复提取同时跟踪文本矩阵与 CTM 产出
+// 定位 run（TextRun），上层可重建带坐标的版面行；坐标依赖文本矩阵而字符宽
+// 度为估算值，只在乱码显著减少时替换原坐标提取结果。
 package pdfenc
 
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"sort"
 	"strings"
 	"unicode"
@@ -576,17 +578,109 @@ func HasUnicodeRecoveryCandidate(page pdf.Page) bool {
 // extractPDFUnicodeText 读取页面内容流并按字体解码文本操作符。函数对第三方
 // PDF 解释器 panic 做流级隔离，单个畸形 Form 不影响页面其他内容。
 func ExtractUnicodeText(page pdf.Page) (string, bool) {
-	extractor := &pdfUnicodeTextExtractor{}
+	extractor := newPDFUnicodeTextExtractor()
 	extractor.extract(page.V.Key("Contents"), page.Resources(), 0)
 	result := strings.TrimSpace(extractor.out.String())
 	return result, result != ""
 }
 
-// pdfUnicodeTextExtractor 保存页面及嵌套 Form XObject 的有界文本提取状态。
+// TextRun 一段定位文本：内容流中一次文本绘制算子的解码结果，
+// X/Y 为默认用户空间（y 向上，pt）内的绘制起点，FontSize 为包含文本矩阵
+// 与 CTM 缩放后的有效字号，WidthEstimate 为按字形类别的经验宽度估算。
+type TextRun struct {
+	Text          string
+	X, Y          float64
+	FontSize      float64
+	WidthEstimate float64
+}
+
+// ExtractUnicodeTextRuns 带定位提取页面文本：在解码文本的同时跟踪 CTM 与
+// 文本矩阵（Tm/Td/TD/T*/TJ 等），把每次绘制算子的文本记录为定位 run，
+// 供上层把恢复文本升级为带坐标的版面行。提取失败或无文本时返回 false。
+func ExtractUnicodeTextRuns(page pdf.Page) ([]TextRun, bool) {
+	extractor := newPDFUnicodeTextExtractor()
+	extractor.extract(page.V.Key("Contents"), page.Resources(), 0)
+	return extractor.runs, len(extractor.runs) > 0
+}
+
+// pdfUnicodeMatrix 是 2D 仿射矩阵的行向量表示（a b c d e f）：
+// 点 p 经矩阵映射为 p·M，x' = x·a + y·c + e，y' = x·b + y·d + f。
+type pdfUnicodeMatrix struct{ a, b, c, d, e, f float64 }
+
+var pdfUnicodeIdentityMatrix = pdfUnicodeMatrix{a: 1, d: 1}
+
+// compose 返回先作用 outer、再作用 inner 的复合矩阵（p·outer·inner）。
+func (outer pdfUnicodeMatrix) compose(inner pdfUnicodeMatrix) pdfUnicodeMatrix {
+	return pdfUnicodeMatrix{
+		a: outer.a*inner.a + outer.b*inner.c,
+		b: outer.a*inner.b + outer.b*inner.d,
+		c: outer.c*inner.a + outer.d*inner.c,
+		d: outer.c*inner.b + outer.d*inner.d,
+		e: outer.e*inner.a + outer.f*inner.c + inner.e,
+		f: outer.e*inner.b + outer.f*inner.d + inner.f,
+	}
+}
+
+// translate 返回平移矩阵。
+func pdfUnicodeTranslate(tx, ty float64) pdfUnicodeMatrix {
+	return pdfUnicodeMatrix{a: 1, d: 1, e: tx, f: ty}
+}
+
+// scale 取矩阵线性部分的均匀缩放近似（行列式绝对值的平方根），
+// 旋转/翻转矩阵返回 1。
+func (m pdfUnicodeMatrix) scale() float64 {
+	det := m.a*m.d - m.b*m.c
+	return math.Sqrt(math.Abs(det))
+}
+
+// transform 把点映射到矩阵目标空间。
+func (m pdfUnicodeMatrix) transform(x, y float64) (float64, float64) {
+	return x*m.a + y*m.c + m.e, x*m.b + y*m.d + m.f
+}
+
+// pdfUnicodeRunWidth 按字形类别估算文本渲染宽度：CJK 全角字形按 1em，
+// 其他按 0.55em。用于 run 间水平间隙判断与词盒宽度，无需字体度量。
+func pdfUnicodeRunWidth(text string, fontSize float64) float64 {
+	width := 0.0
+	for _, r := range text {
+		switch {
+		case r == ' ':
+			width += 0.35 * fontSize
+		case unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hangul, r) ||
+			unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) ||
+			(r >= 0x3000 && r <= 0x303F) || (r >= 0xFF00 && r <= 0xFFEF):
+			width += fontSize
+		default:
+			width += 0.55 * fontSize
+		}
+	}
+	return width
+}
+
+// pdfUnicodeTextExtractor 保存页面及嵌套 Form XObject 的有界文本提取状态，
+// 同时跟踪图形状态（CTM/q/Q/cm）与文本矩阵（Tm/Td/TD/T*/TL/Tf/TJ），
+// 把每次文本绘制记录为定位 run。
+// newPDFUnicodeTextExtractor 构造提取器：CTM 与文本矩阵初始化为单位矩阵
+// （内容流无 cm/Tm 时坐标即原始用户空间坐标）。
+func newPDFUnicodeTextExtractor() *pdfUnicodeTextExtractor {
+	return &pdfUnicodeTextExtractor{
+		ctm: pdfUnicodeIdentityMatrix,
+		tm:  pdfUnicodeIdentityMatrix,
+		tlm: pdfUnicodeIdentityMatrix,
+	}
+}
+
 type pdfUnicodeTextExtractor struct {
 	out        strings.Builder
 	lineEnded  bool
 	formVisits int
+	runs       []TextRun
+	ctm        pdfUnicodeMatrix
+	tm         pdfUnicodeMatrix
+	tlm        pdfUnicodeMatrix
+	leading    float64
+	fontSize   float64
+	ctmStack   []pdfUnicodeMatrix
 }
 
 // lineBreak 在已有非换行内容后追加一次换行。
@@ -597,7 +691,9 @@ func (extractor *pdfUnicodeTextExtractor) lineBreak() {
 	}
 }
 
-// appendRaw 使用当前字体解码并追加原始 PDF 字符串。
+// appendRaw 使用当前字体解码并追加原始 PDF 字符串；同时按当前文本矩阵
+// 记录定位 run，并按估算字宽推进 Tm（ successive Tj 无显式定位时避免
+// 多个 run 叠在同一坐标）。
 func (extractor *pdfUnicodeTextExtractor) appendRaw(current *pdfUnicodeCMap, raw string) {
 	if current == nil {
 		return
@@ -606,6 +702,24 @@ func (extractor *pdfUnicodeTextExtractor) appendRaw(current *pdfUnicodeCMap, raw
 	extractor.out.WriteString(decoded)
 	if decoded != "" {
 		extractor.lineEnded = strings.HasSuffix(decoded, "\n")
+	}
+	if strings.TrimSpace(decoded) == "" {
+		return
+	}
+	fontSize := extractor.fontSize * extractor.tm.scale() * extractor.ctm.scale()
+	x, y := extractor.ctm.transform(extractor.tm.e, extractor.tm.f)
+	extractor.runs = append(extractor.runs, TextRun{
+		Text:          decoded,
+		X:             x,
+		Y:             y,
+		FontSize:      fontSize,
+		WidthEstimate: pdfUnicodeRunWidth(decoded, fontSize),
+	})
+	// 把估算渲染宽度换算回文本空间并推进 Tm（Tj 的规范隐式推进）
+	scale := extractor.tm.scale() * extractor.ctm.scale()
+	if scale > 1e-6 {
+		advance := extractor.runs[len(extractor.runs)-1].WidthEstimate / scale
+		extractor.tm = pdfUnicodeTranslate(advance, 0).compose(extractor.tm)
 	}
 }
 
@@ -633,10 +747,49 @@ func (extractor *pdfUnicodeTextExtractor) extract(stream, resources pdf.Value, d
 			arguments[index] = stack.Pop()
 		}
 		switch operator {
+		case "q":
+			extractor.ctmStack = append(extractor.ctmStack, extractor.ctm)
+		case "Q":
+			if len(extractor.ctmStack) > 0 {
+				extractor.ctm = extractor.ctmStack[len(extractor.ctmStack)-1]
+				extractor.ctmStack = extractor.ctmStack[:len(extractor.ctmStack)-1]
+			}
+		case "cm":
+			if matrix, ok := pdfUnicodeMatrixFromValues(arguments); ok {
+				extractor.ctm = matrix.compose(extractor.ctm)
+			}
 		case "Tf":
 			if len(arguments) == 2 {
 				current = fonts[arguments[0].Name()]
+				extractor.fontSize = arguments[1].Float64()
 			}
+		case "TL":
+			if len(arguments) == 1 {
+				extractor.leading = arguments[0].Float64()
+			}
+		case "BT":
+			extractor.tm, extractor.tlm = pdfUnicodeIdentityMatrix, pdfUnicodeIdentityMatrix
+		case "Tm":
+			if matrix, ok := pdfUnicodeMatrixFromValues(arguments); ok {
+				extractor.tm, extractor.tlm = matrix, matrix
+			}
+		case "Td", "TD":
+			if len(arguments) != 2 {
+				return
+			}
+			tx, ty := arguments[0].Float64(), arguments[1].Float64()
+			if operator == "TD" {
+				extractor.leading = -ty
+			}
+			if ty != 0 {
+				extractor.lineBreak()
+			}
+			extractor.tlm = pdfUnicodeTranslate(tx, ty).compose(extractor.tlm)
+			extractor.tm = extractor.tlm
+		case "T*":
+			extractor.tlm = pdfUnicodeTranslate(0, -extractor.leading).compose(extractor.tlm)
+			extractor.tm = extractor.tlm
+			extractor.lineBreak()
 		case "Tj":
 			if len(arguments) == 1 {
 				extractor.appendRaw(current, arguments[0].RawString())
@@ -654,18 +807,22 @@ func (extractor *pdfUnicodeTextExtractor) extract(stream, resources pdf.Value, d
 					extractor.out.WriteByte(' ')
 					extractor.lineEnded = false
 				}
+				if value.Kind() != pdf.String {
+					// TJ 数字参数按规范水平调整 Tm（−num/1000×Tfs）
+					extractor.tm = pdfUnicodeTranslate(
+						-value.Float64()/1000*extractor.fontSize, 0,
+					).compose(extractor.tm)
+				}
 			}
 		case "'", "\"":
 			extractor.lineBreak()
+			extractor.tlm = pdfUnicodeTranslate(0, -extractor.leading).compose(extractor.tlm)
+			extractor.tm = extractor.tlm
 			if len(arguments) > 0 {
 				extractor.appendRaw(current, arguments[len(arguments)-1].RawString())
 			}
-		case "T*", "ET":
+		case "ET":
 			extractor.lineBreak()
-		case "Td", "TD":
-			if len(arguments) == 2 && arguments[1].Float64() != 0 {
-				extractor.lineBreak()
-			}
 		case "Do":
 			if len(arguments) != 1 || depth >= pdfUnicodeMaxFormDepth || extractor.formVisits >= pdfUnicodeMaxFormVisits {
 				return
@@ -678,13 +835,42 @@ func (extractor *pdfUnicodeTextExtractor) extract(stream, resources pdf.Value, d
 			if formResources.IsNull() {
 				formResources = resources
 			}
+			// Form 有自带 Matrix 时先作用其变换再递归（结束后恢复外层状态）
+			savedCTM, savedTM, savedTLM := extractor.ctm, extractor.tm, extractor.tlm
+			if raw := form.Key("Matrix"); raw.Len() == 6 {
+				matrixValues := make([]pdf.Value, 6)
+				for i := range matrixValues {
+					matrixValues[i] = raw.Index(i)
+				}
+				if matrix, ok := pdfUnicodeMatrixFromValues(matrixValues); ok {
+					extractor.ctm = matrix.compose(extractor.ctm)
+				}
+			}
 			extractor.formVisits++
 			extractor.lineBreak()
 			extractor.extract(form, formResources, depth+1)
 			extractor.lineBreak()
+			extractor.ctm, extractor.tm, extractor.tlm = savedCTM, savedTM, savedTLM
 		}
 	})
 	return true
+}
+
+// pdfUnicodeMatrixFromValues 按 a b c d e f 顺序构造矩阵；参数不足或非法时失败。
+func pdfUnicodeMatrixFromValues(values []pdf.Value) (pdfUnicodeMatrix, bool) {
+	if len(values) != 6 {
+		return pdfUnicodeMatrix{}, false
+	}
+	for _, value := range values {
+		if value.Kind() != pdf.Integer && value.Kind() != pdf.Real {
+			return pdfUnicodeMatrix{}, false
+		}
+	}
+	return pdfUnicodeMatrix{
+		a: values[0].Float64(), b: values[1].Float64(),
+		c: values[2].Float64(), d: values[3].Float64(),
+		e: values[4].Float64(), f: values[5].Float64(),
+	}, true
 }
 
 // newPDFUnicodeFont 构造字体解码器：自带 ToUnicode 时使用更完整的 CMap

@@ -131,13 +131,45 @@ type pdfElement struct {
 // preparePDFLinesForDocument 在页眉页脚和目录完成标注后恢复表格，并对每页
 // 剩余内容应用 XY-cut。表格以携带原始 bbox 的占位行参与版面排序，构建文档时
 // 再转成 TableItem；被表格消费的文字行不会重复进入正文。
-func preparePDFLinesForDocument(lines []pdfLine) []pdfLine {
+//
+// 表格识别分两层：先由 pageEdges 提供的各页矢量框线做有线表格还原
+// （detectPDFRuledTables，Word/WPS 导出的表格边框路径），未被框线表格消费的
+// 剩余行再走大留白切列的坐标启发式（detectPDFTables / detectPDFSparseTables，
+// 无边框表格）；两层互斥消费，区间下标统一映射回原始行后按文档顺序缝合。
+func preparePDFLinesForDocument(lines []pdfLine, pageEdges map[int64][]pdfRuleEdge) []pdfLine {
 	if len(lines) == 0 {
 		return nil
 	}
-	tables, _ := detectPDFTables(lines)
-	if len(tables) == 0 {
-		tables, _ = detectPDFSparseTables(lines)
+	var tables []pdfDetectedTable
+	ruled, consumed := detectPDFRuledTables(lines, pageEdges)
+	if len(ruled) > 0 {
+		tables = append(tables, ruled...)
+		// 未被框线消费的剩余行继续做无边框表格识别；启发式的 StartLine/
+		// EndLine 相对剩余序列，映射回原始行下标后参与统一缝合
+		restIdx := make([]int, 0, len(lines))
+		rest := make([]pdfLine, 0, len(lines))
+		for index := range lines {
+			if consumed[index] {
+				continue
+			}
+			restIdx = append(restIdx, index)
+			rest = append(rest, lines[index])
+		}
+		whitespace, _ := detectPDFTables(rest)
+		if len(whitespace) == 0 {
+			whitespace, _ = detectPDFSparseTables(rest)
+		}
+		for _, table := range whitespace {
+			table.StartLine = restIdx[table.StartLine]
+			table.EndLine = restIdx[table.EndLine-1] + 1
+			tables = append(tables, table)
+		}
+	} else {
+		whitespace, _ := detectPDFTables(lines)
+		if len(whitespace) == 0 {
+			whitespace, _ = detectPDFSparseTables(lines)
+		}
+		tables = whitespace
 	}
 	if len(tables) == 0 {
 		return sortPDFLinesByPageXYCut(lines)

@@ -151,7 +151,7 @@ func TestDetectPDFSparseTablesAllowsMissingCells(t *testing.T) {
 	if len(tables) != 1 || len(remaining) != 0 || tables[0].Data.NumRows != 3 || tables[0].Data.NumCols != 3 || len(tables[0].Data.TableCells) != 8 {
 		t.Fatalf("sparse table recovery wrong: tables=%+v remaining=%+v", tables, remaining)
 	}
-	if prepared := preparePDFLinesForDocument(lines); len(prepared) != 1 || prepared[0].Table == nil {
+	if prepared := preparePDFLinesForDocument(lines, nil); len(prepared) != 1 || prepared[0].Table == nil {
 		t.Fatalf("sparse table not integrated into PDF flow: %+v", prepared)
 	}
 }
@@ -179,7 +179,7 @@ func TestMergePDFContinuationTablesJoinsRepeatedHeader(t *testing.T) {
 		pdfTableTestLine(1, 745, "名称", 42, 72, "数值", 182, 212),
 		pdfTableTestLine(1, 725, "乙", 42, 56, "2", 182, 190),
 	}
-	prepared := preparePDFLinesForDocument(lines)
+	prepared := preparePDFLinesForDocument(lines, nil)
 	pages := map[string]PageItem{
 		"1": {PageNo: 1, Size: &ImageSize{Width: 600, Height: 800}},
 		"2": {PageNo: 2, Size: &ImageSize{Width: 600, Height: 800}},
@@ -214,7 +214,7 @@ func TestMergePDFContinuationTablesRejectsIndependentTables(t *testing.T) {
 		pdfTableTestLine(1, 500, "名称", 40, 70, "数值", 180, 210),
 		pdfTableTestLine(1, 480, "乙", 40, 54, "2", 180, 188),
 	}
-	prepared := preparePDFLinesForDocument(lines)
+	prepared := preparePDFLinesForDocument(lines, nil)
 	pages := map[string]PageItem{
 		"1": {PageNo: 1, Size: &ImageSize{Width: 600, Height: 800}},
 		"2": {PageNo: 2, Size: &ImageSize{Width: 600, Height: 800}},

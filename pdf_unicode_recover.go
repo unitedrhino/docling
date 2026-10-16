@@ -13,6 +13,8 @@ import (
 )
 
 // recoverPDFUnicodeLines 在现有坐标文本乱码明显时尝试第二条字体解码路径。
+// 恢复成功时优先用定位 run 重建带坐标的文本行（可参与表格框线还原、
+// 字号标题启发式与 XY-cut 版面分析），重建失败再退回无坐标兜底行。
 func recoverPDFUnicodeLines(page pdf.Page, pageIdx int64, existing []pdfLine) []pdfLine {
 	existingText := joinPDFLineText(existing)
 	candidate := pdfenc.HasUnicodeRecoveryCandidate(page)
@@ -22,6 +24,9 @@ func recoverPDFUnicodeLines(page pdf.Page, pageIdx int64, existing []pdfLine) []
 	recovered, ok := pdfenc.ExtractUnicodeText(page)
 	if !ok || !pdfUnicodeRecoveryBetter(existingText, recovered, candidate) {
 		return existing
+	}
+	if lines := assemblePDFUnicodeRunLines(page, pageIdx); len(lines) > 0 {
+		return lines
 	}
 	var lines []pdfLine
 	for _, text := range strings.Split(strings.ReplaceAll(recovered, "\r\n", "\n"), "\n") {
@@ -35,6 +40,40 @@ func recoverPDFUnicodeLines(page pdf.Page, pageIdx int64, existing []pdfLine) []
 		return existing
 	}
 	return lines
+}
+
+// assemblePDFUnicodeRunLines 把恢复路径的定位 run 组装为坐标文本行：
+// run 视为字符级条目复用 assemblePDFLines 的容差分行与词聚合；全部 run
+// 缺有效坐标（畸形文本矩阵）时返回 nil，避免全零 bbox 混入版面计算。
+func assemblePDFUnicodeRunLines(page pdf.Page, pageIdx int64) []pdfLine {
+	runs, ok := pdfenc.ExtractUnicodeTextRuns(page)
+	if !ok || len(runs) == 0 {
+		return nil
+	}
+	chars := make([]pdf.Text, 0, len(runs))
+	for _, run := range runs {
+		text := strings.TrimSpace(run.Text)
+		if text == "" {
+			continue
+		}
+		chars = append(chars, pdf.Text{
+			S:        text,
+			X:        run.X,
+			Y:        run.Y,
+			W:        run.WidthEstimate,
+			FontSize: run.FontSize,
+		})
+	}
+	if len(chars) == 0 {
+		return nil
+	}
+	lines := assemblePDFLines(chars, pageIdx)
+	for _, line := range lines {
+		if line.MinX != 0 || line.MaxX != 0 || line.MinY != 0 || line.MaxY != 0 {
+			return lines
+		}
+	}
+	return nil
 }
 
 // pdfUnicodeRecoveryBetter 只接受有足够正文且乱码率严格下降的恢复结果。
