@@ -4,9 +4,36 @@ English | [简体中文](README.md)
 
 > Feed any document to your LLM — a single pure-Go binary, 1–2 orders of magnitude faster, with optional LLM enhancement for the hard pages.
 
-`docling` converts PDF, Word, PPT, Excel/CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text and CAD drawings (DWG/DXF) into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
+`docling` converts PDF, DOC/DOCX, PPTX, BIFF8 XLS/XLSX, EPUB, CHM, CSV, HTML, Markdown, AsciiDoc, EML email, images, plain text, CAD drawings (DWG/DXF) and GLB 2.0 3D models into a unified **DoclingDocument** structured model (aligned with the Docling Core `1.10.0` official protocol) — a drop-in document ingestion layer for RAG chunking, embedding pipelines and agent toolchains.
 
 > Naming note: this repository is a pure-Go implementation of the [Docling](https://github.com/docling-project/docling) protocol. The Go package is named `docling` and shares the same document model as the Python reference implementation.
+
+## Supported input formats and scope
+
+| Input type | Supported scope |
+|------------|-----------------|
+| PDF | Text, page structure and tables; OCR/vision hooks can be configured for scanned pages. |
+| Word | `.doc`, `.docx`; legacy `.doc` extracts paragraph and cell text without reconstructing full table boundaries, images or layout. |
+| Presentations | `.pptx`; legacy binary `.ppt` is not supported. |
+| Spreadsheets and data | `.xls` (Excel 97–2003 BIFF8), `.xlsx`, `.csv`; legacy XLS reads cached values, does not calculate formulas, and recognizes common built-in date/percentage styles. |
+| Ebooks and help files | `.epub` chapters in spine reading order; `.chm` HTML topics in table-of-contents order. |
+| Web and email | HTML, Markdown, AsciiDoc, EML. |
+| CAD drawings | DWG (R9–R2018) and ASCII/binary DXF; splits by drawing frame and extracts frame text. |
+| 3D models | GLB 2.0 scenes, nodes, meshes, materials and existing properties; no geometry rendering or engineering inference. |
+| Images | PNG, JPEG, BMP, WEBP and SVG; OCR can be configured for raster images. |
+| Other | Plain text and DoclingDocument JSON read-back. |
+
+## Output formats and use cases
+
+| Output | Content and use | API / CLI |
+|--------|----------------|-----------|
+| Markdown | Readable text for search and knowledge bases, with headings, lists and tables converted to Markdown. | `ToMarkdown` / `--format md` |
+| HTML | Web-friendly rendering of the structured document. | `ToHTML` |
+| DoclingDocument JSON | Docling Core 1.10 document model with body tree, page and source structure for system-to-system exchange. | `--format json` |
+| `content_list` JSON | Flattens the document tree into retrieval items while keeping type and hierarchy metadata for chunking and embedding. | `ToContentList` / `--format content-list` |
+| Outline | Quick view of document structure; the CLI default. | `--format outline` |
+
+Hierarchical/Hybrid chunkers and knowledge-base chunking strategies are also available; they return chunks rather than another document serialization format.
 
 ## Why this library exists
 
@@ -17,7 +44,7 @@ Before feeding documents to an LLM/RAG pipeline, four questions must be answered
 
 | Pain point | docling (Go)'s answer |
 |------------|------------------------|
-| Heterogeneous formats: PDF, Office, web, email and images each need their own parsing stack, and stitching them together is expensive to maintain | One unified DoclingDocument model: 13 formats, one entry point, one API, aligned with the official protocol |
+| Heterogeneous formats: PDF, Office, web, email and images each need their own parsing stack, and stitching them together is expensive to maintain | One unified DoclingDocument model: multiple formats, one entry point, one API, aligned with the official protocol |
 | High-quality options (Python model pipelines) are heavy: a Python service plus multi-GB layout/table models — hard to run for bulk ingestion, CI and edge nodes | Pure Go, single binary, `go get` and go; millisecond-to-second parsing with zero external services |
 | All-model is slow and costly; all-rules caps the quality | Hybrid architecture: a rule-engine baseline, with scanned pages, image tables and formula-dense pages auto-routed to your LLM by quality signals — the model is spent only where it matters |
 | Model transcription "hallucinates" data, so ingested results cannot be trusted | Never fabricate: chart data is restored exactly from the document's own caches; content the rules cannot determine keeps its raw signal explicitly instead of a guess |
@@ -109,19 +136,21 @@ xychart-beta
 | Input format | docling (Go) | Python Docling |
 |--------------|--------------|-----------------|
 | PDF | ✅ | ✅ |
-| Word (DOCX) | ✅ | ✅ |
+| Word (DOC/DOCX) | ✅ (DOC text extraction) | ✅ |
 | PPT (PPTX) | ✅ | ✅ |
-| Excel (XLSX) / CSV | ✅ | ✅ |
+| Excel (BIFF8 XLS/XLSX) / CSV | ✅ (XLS cached values) | ✅ |
 | HTML | ✅ | ✅ |
 | Markdown | ✅ | ✅ |
 | AsciiDoc | ✅ | ❌ |
 | EML email | ✅ | ✅ (also MSG) |
 | CAD drawings (DWG R9–R2018 / DXF) | ✅ (smart sheet split, one page per frame) | ❌ |
+| GLB 3D models (GLB 2.0) | ✅ (scenes, nodes, meshes, materials and existing properties; no geometry rendering) | ❌ |
 | Images PNG/JPEG/BMP/WEBP | ✅ | ✅ (also TIFF) |
 | Plain text | ✅ | ✅ |
 | Docling JSON (read back) | ✅ | ✅ |
 | Audio transcription (WAV/MP3 ASR) | ❌ planned | ✅ |
-| EPUB / Apple Pages | ❌ planned | ✅ |
+| EPUB / CHM | ✅ (chapter/topic extraction) | ✅ |
+| Apple Pages | ❌ planned | ✅ |
 | XML (XBRL/JATS/USPTO) / usda | ❌ planned | ✅ |
 | LaTeX | ❌ planned | ✅ |
 | ZIP archives | ❌ | ✅ |
@@ -147,13 +176,17 @@ xychart-beta
 | Auto-detect by extension | `ParseByExt` / `ParseByExtWithOptions` | Preferred entry when the format is unknown; fills in name, MIME, SHA-256 hash and origin |
 | PDF | `ParsePDF` / `ParsePDFWithOptions` | Coordinate normalization, word/line bboxes, font recovery, embedded bitmaps, tables, cross-page merging, recursive XY-cut; optional Poppler, OCR and vision hooks |
 | Word | `ParseDocx` | Transitional/Strict OOXML, comment threads, footnotes/endnotes, tracked changes & fields, OMML formulas, charts and SmartArt/OLE |
+| Legacy Word | `ParseDOC` | Extracts paragraph and table cell text directly from binary DOC; table boundaries, headings, images and layout are not reconstructed |
 | PPT | `ParsePPTX` | Notes, comment threads, layout/master fallback, grouped shapes, charts and complex Office objects |
 | Excel / CSV | `ParseXLSX` / `ParseCSV` | Hidden sheets, threaded comments, raw formulas, pivot tables, chart sheets |
+| Legacy Excel | `ParseXLS` | Excel 97–2003 BIFF8 sheets and cached cell values; common built-in percentage formats are rendered, dates are normalized to ISO; custom number formats are not fully emulated and formulas are not recalculated |
+| Ebooks / help files | `ParseEPUB` / `ParseCHM` | EPUB spine order and CHM HTML topic extraction |
 | HTML | `ParseHTML` | Furniture, flattened headings, image placeholders, rich tables |
 | Markdown | `ParseMarkdown` | Flattened headings, image placeholders, GFM tables |
 | AsciiDoc | `ParseAsciiDoc` | Heading tree, lists, literal/source blocks |
 | EML | `ParseEML` | RFC 5322 headers, best-body selection, common charsets, attachment names |
 | CAD drawings | `ParseCAD` | DWG (R9–R2018) / DXF (ASCII/binary) auto-detection, smart sheet splitting with one page per frame (sheet title + rendered image + frame texts), GBK/UTF-16 CJK decoding |
+| GLB 3D models | `ParseGLB` | GLB 2.0 scenes, node relationships, mesh/render material names and existing custom properties; preserves indexed object sources without geometry rendering or engineering inference |
 | Images | `ParseImage` | PNG/JPEG/BMP/WEBP; adds recognition results when OCR is configured |
 | Plain text | `ParseText` | BOM and control-character cleanup |
 | Docling JSON | `ParseDoclingDocument` | Parses JSON produced by a Docling service |
@@ -175,6 +208,31 @@ chunks := docling.HierarchicalChunks(doc)                   // official hierarch
 md := doc.ToMarkdown()
 html := doc.ToHTML()
 ```
+
+### GLB: model metadata for knowledge bases
+
+GLB 2.0 uses the same entry point and produces Markdown, Docling JSON and content-list output. Scenes, nodes, meshes and rendering materials become separate sections; names, node relationships and existing custom properties become searchable text.
+
+```go
+// data contains the GLB bytes; the facade fills in the name, MIME and source hash.
+doc, err := docling.ParseByExt("equipment.glb", data)
+if err != nil {
+    return err
+}
+
+// Readable metadata and knowledge-base chunks grouped by object section.
+md := doc.ToMarkdown()
+items := docling.ToContentList(doc, docling.SourceGolight)
+chunks := docling.ChunkContentList(items, docling.ContentChunkOptions{})
+```
+
+Objects retain their indices alongside names. Property text includes JSON pointers such as `#/nodes/1/extras`, and chunks retain section paths, so duplicate names remain distinguishable. Large integer identifiers preserve their original JSON precision.
+
+Input is limited to **128 MiB**, with at most **16 MiB** of JSON and **10,000 nodes**. This parser extracts structure and existing properties. It does not load external geometry/textures, decompress meshes, render 3D previews or infer dimensions, model numbers, engineering materials or BOMs from appearance.
+
+`glb_test.go` covers structure, property precision, unified outputs and invalid references. The standard binary samples BoxVertexColors and OrientationTest have also been checked through all three CLI output formats. These checks do not establish complete geometry compatibility.
+
+GLB support is available from **v1.5.0**. Upgrade the dependency before use; v1.4.0 and earlier versions do not include this feature.
 
 ### Attach an LLM: modern hybrid parsing
 
@@ -222,6 +280,9 @@ go install github.com/unitedrhino/docling/cmd/docling@latest
 
 # Progressive disclosure: a tiny structure map first (headings/tables/images)
 docling parse report.pdf --format outline
+# GLB structure and properties: readable text or knowledge-base content list
+docling parse equipment.glb --format md
+docling parse equipment.glb --format content-list --out model.content-list.json
 # Full read, or drill into one chapter
 docling parse report.pdf --format md
 docling parse report.pdf --format md --section 第四章
@@ -403,7 +464,7 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 | Dimension | anydoc (Rust) | docling (Go) |
 |-----------|----------------|----------------|
 | Positioning | Pure conversion: no OCR, no chunking, no chart semantics | Conversion + structure + RAG chunking, one stop to retrieval |
-| Formats | 14 (strong on legacy binary .doc/.ppt/.xls, ODF, RTF, EPUB) | 13 (strong on HTML, Markdown, AsciiDoc, EML email, images, CAD drawings, Docling JSON read-back) |
+| Formats | 14 (strong on legacy binary .doc/.ppt/.xls, ODF, RTF, EPUB) | Multiple (HTML, Markdown, AsciiDoc, EML, images, CAD, GLB, DOC, XLS, EPUB, CHM and Docling JSON) |
 | Output | GFM Markdown only | Markdown / HTML / Docling JSON (lossless) / content_list + three chunkers |
 | PDF depth | Text PDFs extracted directly; scans rejected with Unsupported (OCR via Firecrawl's hosted API) | Deep text-PDF parsing (cross-page tables / multi-column / font recovery / JPEG2000-JBIG2-soft masks); scanned pages route to **self-hosted** LLM hooks |
 | Charts | No chart semantics | OOXML chart data backfilled as searchable tables + SVG previews |
@@ -413,8 +474,8 @@ external services, scanned PDFs rejected with Unsupported); docling takes the **
 > A note on speed: 4.4ms vs 0.31s is not apples-to-apples — the former is shallow Office-doc
 conversion, the latter deep PDF parsing (table structure / reading order / font recovery). The
 philosophies are close (loud failure beats silent pollution); pick "fastest clean Markdown" or
-"structural depth + RAG readiness" accordingly. Legacy binary Office, ODF, RTF and EPUB are on
-docling's roadmap.
+"structural depth + RAG readiness" accordingly. Legacy PPT, ODF and RTF remain on
+docling's roadmap; DOC, XLS, EPUB and CHM now support content extraction.
 
 ## Gaps vs Python Docling (stated honestly)
 
@@ -445,7 +506,7 @@ HierarchicalChunker/HybridChunker; on parsing quality the gaps are explicit:
   read in the right orientation) — native to the model pipeline
 - **Tables/formulas inside images**: TableFormer recognizes image tables directly; we route
   such pages through the VisualHook, and without it we keep geometric signals rather than guess
-- **Input coverage**: audio ASR, EPUB, Apple Pages, XML families (XBRL/JATS/USPTO) and LaTeX are
+- **Input coverage**: audio ASR, Apple Pages, XML families (XBRL/JATS/USPTO) and LaTeX are
   supported by the original and still on our roadmap
 - **Extreme fonts**: for embedded CID-keyed CFF without mappings or encrypted fonts, the
   original's vision model can still "read" the text; we keep replacement characters
@@ -474,6 +535,7 @@ docling/
 ├── pdf*.go              # PDF: text/layout/tables/vision routing/image orchestration
 ├── docx*.go pptx.go sheet.go # Word / PPT / Excel parsing
 ├── html.go markdown.go asciidoc.go eml.go image.go text.go table.go cad.go
+├── glb.go               # GLB 2.0 structure, existing properties and indexed sources
 ├── internal/pdfenc/     # PDF byte-encoding layer: ToUnicode/CMap/SFNT recovery, JPX/JBIG2 decoding, soft-mask alpha
 ├── internal/ooxml/      # Strict OOXML → Transitional normalization
 ├── examples/            # per-format sample sources paired with expected Markdown
@@ -488,6 +550,7 @@ docling/
 - [go-jpeg2000](https://github.com/mrjoshuak/go-jpeg2000) (Apache-2.0) — pure Go JPEG 2000 decoding
 - [gobig2](https://github.com/dkrisman/gobig2) (Apache-2.0) — pure Go JBIG2 decoding
 - [goldmark](https://github.com/yuin/goldmark) (MIT), [golang.org/x/net](https://pkg.go.dev/golang.org/x/net), [golang.org/x/text](https://pkg.go.dev/golang.org/x/text), [golang.org/x/image](https://pkg.go.dev/golang.org/x/image)
+- [qmuntal/gltf](https://github.com/qmuntal/gltf) (BSD-2-Clause) — pure Go glTF metadata types; geometry is not loaded
 - [Docling](https://github.com/docling-project/docling) (MIT) — reference for the output protocol and chunking semantics
 
 ## Community

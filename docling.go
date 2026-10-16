@@ -106,8 +106,16 @@ func parseByExtData(name string, data []byte, options ParseOptions) (*DoclingDoc
 		return ParseMarkdown(data)
 	case ".docx":
 		return ParseDocx(data)
+	case ".doc":
+		return ParseDOC(data)
 	case ".xlsx":
 		return ParseXLSX(data)
+	case ".xls":
+		return ParseXLS(data)
+	case ".epub":
+		return ParseEPUB(data)
+	case ".chm":
+		return ParseCHM(data)
 	case ".csv":
 		return ParseCSV(data)
 	case ".pdf":
@@ -152,6 +160,8 @@ func parseByExtData(name string, data []byte, options ParseOptions) (*DoclingDoc
 			MIMEType: mimeType,
 			Filename: filepath.Base(name),
 		})
+	case ".glb":
+		return ParseGLB(data)
 	default:
 		return nil, fmt.Errorf("docling: 不支持的文件类型 %s", filepath.Ext(name))
 	}
@@ -189,8 +199,16 @@ func documentMIMEForExt(ext string) string {
 		return "text/markdown"
 	case ".docx":
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".doc":
+		return "application/msword"
 	case ".xlsx":
 		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".epub":
+		return "application/epub+zip"
+	case ".chm":
+		return "application/vnd.ms-htmlhelp"
 	case ".csv":
 		return "text/csv"
 	case ".pdf":
@@ -218,6 +236,8 @@ func documentMIMEForExt(ext string) string {
 	case ".dxf", ".dxfb":
 		// DXF ASCII 与二进制变体同 MIME（二进制只是编码差异，语义同源）
 		return "image/vnd.dxf"
+	case ".glb":
+		return "model/gltf-binary"
 	default:
 		return "application/octet-stream"
 	}

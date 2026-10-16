@@ -1,0 +1,37 @@
+github.com/gen2brain/folio
+
+This product includes software developed by the Mozilla Foundation as part of
+PDF.js (https://github.com/mozilla/pdf.js), licensed under the Apache License,
+Version 2.0, including the CCITT fax decoder, which PDF.js in turn ported from
+XPDF, Copyright 1996-2003 Glyph & Cog, LLC, and made available under the same
+license.
+
+Portions are derived from PDFium (https://pdfium.googlesource.com/pdfium),
+Copyright 2014 The PDFium Authors, licensed under a BSD-style license, including
+the base 14 substitute fonts, which are additionally
+Copyright 2014 Foxit Software Inc. (http://www.foxitsoftware.com), and the
+bundled Anti-Grain Geometry 2.3, Copyright (C) 2002-2005 Maxim Shemanarev.
+
+Portions are derived from tiny-skia (https://github.com/linebender/tiny-skia),
+Copyright (c) 2020 Yevhenii Reizner, itself derived from Skia,
+Copyright (c) 2011 Google Inc., both licensed under a BSD-style license.
+
+Portions are derived from OpenJPEG (https://github.com/uclouvain/openjpeg),
+licensed under the 2-clause BSD license.
+
+Portions are derived from Brotli (https://github.com/google/brotli),
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors, and from WOFF2
+(https://github.com/google/woff2), Copyright (c) 2013-2017 by the WOFF2
+Authors, both licensed under the MIT license, including the RFC 7932 static
+dictionary and word transforms.
+
+The LZX decoder is derived from lzxd (https://github.com/Lonami/lzxd),
+Copyright (c) 2020 Lonami, licensed under the MIT license.
+
+The Adobe Glyph List and the Adobe CMap resources are Copyright Adobe Inc.,
+licensed under the BSD-3-Clause license.
+
+The line breaking, bidirectional, Arabic shaping, combining mark, canonical
+decomposition, Indic syllable and vertical orientation tables are derived from
+the Unicode Character Database, Copyright Unicode, Inc., licensed under the
+Unicode License.
