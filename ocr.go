@@ -316,11 +316,12 @@ func ParsePDFWithOptions(data []byte, opt PDFOptions) (*DoclingDocument, error) 
 		width, height := geometry.width, geometry.height
 		doc.AddPage(int64(i), width, height)
 		lines := normalizePDFLinesGeometry(assemblePDFPageLines(page, int64(i-1)), geometry)
-		// poppler 降级提取（纯规则）：ledongthuc 提取为空或乱码超限时，
-		// 尝试 pdftotext -bbox-layout（中文 CMap 支持完善），取乱码率更低者
+		// 对无坐标的恢复文本，明确的未解码字形也可触发 Poppler，
+		// 避免少量坏字被整页阈值掩盖。有坐标的页面沿用乱码率阈值。
 		pageText := joinPDFLineText(lines)
 		if !opt.DisablePopplerFallback &&
-			(len(lines) == 0 || textGarbageRatio(pageText) > popplerFallbackGarbageThreshold) {
+			(len(lines) == 0 || (lines[0].Fallback && strings.ContainsRune(pageText, '\uFFFD')) ||
+				textGarbageRatio(pageText) > popplerFallbackGarbageThreshold) {
 			if popplerBk == nil {
 				popplerBk = &popplerBackend{data: data}
 			}

@@ -131,6 +131,8 @@ xychart-beta
 | Output protocol | ✅ Docling 1.10 official JSON | ✅ official | ✅ |
 | Deployment | single binary | Python service + models | single binary + model API |
 
+PDF font recovery depends on the available CMaps or embedded font mappings. The Go parser removes confirmed decoding artifacts while preserving surrounding text coordinates. If available, `pdftotext` can recover pages with a high error rate or pages whose recovered text still has undecoded glyphs and lacks coordinates. Heading detection leaves malformed text and fragments in the body, and text extraction joins Chinese characters separated by generated layout spacing.
+
 ## Supported input formats
 
 | Input format | docling (Go) | Python Docling |

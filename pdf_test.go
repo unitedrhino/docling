@@ -198,6 +198,40 @@ func TestAssemblePDFLinesPreservesWordCoordinates(t *testing.T) {
 	}
 }
 
+// TestParsePDFDropsCoincidentGlyphs 验证重绘字符只提取一次，邻位重复字母仍保留。
+func TestParsePDFDropsCoincidentGlyphs(t *testing.T) {
+	data := buildTestPDF(t, []testPDFPage{{content: "BT /F1 12 Tf 72 700 Td (LETTER) Tj ET\n" +
+		"BT /F1 12 Tf 72 700 Td (LETTER) Tj ET"}})
+	doc, err := ParsePDF(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := strings.TrimSpace(doc.Text()); text != "LETTER" {
+		t.Fatalf("预期提取一次 LETTER，实际为 %q", text)
+	}
+}
+
+// TestPDFHeadingRankChecksEveryLine 验证同字号的坏字、碎行与长正文无需
+// 进入章节路径，同时保留同页的有效标题。
+func TestPDFHeadingRankChecksEveryLine(t *testing.T) {
+	lines := []pdfLine{
+		{PageIdx: 1, Text: "有效章节", MaxFontSize: 16},
+		{PageIdx: 1, Text: "p", MaxFontSize: 16},
+		{PageIdx: 1, Text: "坏字�标题", MaxFontSize: 16},
+		{PageIdx: 1, Text: "“ G o { 4 ^ E ä à { k _ p Ê Ä", MaxFontSize: 16},
+		{PageIdx: 1, Text: strings.Repeat("同字号正文", 20), MaxFontSize: 16},
+	}
+	for range 6 {
+		lines = append(lines, pdfLine{PageIdx: 1, Text: "较小字号的正文行。", MaxFontSize: 10})
+	}
+	elements := buildPDFElements(lines)
+	for i, element := range elements {
+		if (element.headingLevel > 0) != (i == 0) {
+			t.Fatalf("正文或标题分类错误：%q level=%d", element.line.Text, element.headingLevel)
+		}
+	}
+}
+
 // TestParsePDFDoclingStructure 验证主路径：标题启发式识别与层级父挂接、
 // 正文元素 prov（页号/BOTTOMLEFT bbox/charspan）、页面尺寸登记，
 // 以及树结构可被简化器消费（正文携带祖先标题章节路径）。

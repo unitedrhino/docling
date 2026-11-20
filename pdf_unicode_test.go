@@ -15,6 +15,36 @@ import (
 	"github.com/unitedrhino/docling/internal/pdfenc"
 )
 
+// TestParsePDFKeepsCoordinatesWhenTJAddsSyntheticReplacement 验证坐标解析器
+// 在 Type0 字体的 TJ 末尾误解码时，独立解码可确认并移除伪字形。
+func TestParsePDFKeepsCoordinatesWhenTJAddsSyntheticReplacement(t *testing.T) {
+	toUnicode := []byte(`1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+2 beginbfchar
+<0001> <4E2D>
+<0002> <6587>
+endbfchar`)
+	objects := [][]byte{
+		[]byte("<< /Type /Catalog /Pages 2 0 R >>"),
+		[]byte("<< /Type /Pages /Kids [4 0 R] /Count 1 >>"),
+		[]byte("<< /Type /Font /Subtype /Type0 /BaseFont /TestSubset /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 7 0 R >>"),
+		[]byte("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>"),
+		pdfTestStream([]byte("BT /F1 24 Tf 72 700 Td [<0001> -500 <0002>] TJ ET")),
+		[]byte("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestSubset /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 1000 >>"),
+		pdfTestStream(toUnicode),
+	}
+	data := buildPDFBinaryObjects(t, objects)
+	doc, err := ParsePDFWithOptions(data, PDFOptions{DisablePopplerFallback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Texts) != 1 || doc.Texts[0].Text != "中文" || doc.Texts[0].Label != LabelTitle ||
+		len(doc.Texts[0].Prov) != 1 || doc.Texts[0].Prov[0].BBox == nil {
+		t.Fatalf("预期保留标题、坐标与连续中文，实际为 %+v", doc.Texts)
+	}
+}
+
 // TestParsePDFRecoversIdentityHFromEmbeddedTrueType 验证 Type0/Identity-H
 // 字体缺少 ToUnicode 时，从 CIDToGIDMap 与嵌入 TrueType cmap 纯 Go 恢复中文；
 // 测试显式关闭 Poppler，确保成功并非来自外部 CLI。
