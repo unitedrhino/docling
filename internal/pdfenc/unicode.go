@@ -586,11 +586,14 @@ func ExtractUnicodeText(page pdf.Page) (string, bool) {
 type pdfUnicodeTextExtractor struct {
 	out        strings.Builder
 	lineEnded  bool
+	lastRune   rune // 上一个已解码字符，用于判断 TJ 的字距是否为词间距。
+	pendingGap bool // TJ 中的位移需要等到读出下一个字符后才能判断。
 	formVisits int
 }
 
 // lineBreak 在已有非换行内容后追加一次换行。
 func (extractor *pdfUnicodeTextExtractor) lineBreak() {
+	extractor.pendingGap = false
 	if extractor.out.Len() > 0 && !extractor.lineEnded {
 		extractor.out.WriteByte('\n')
 		extractor.lineEnded = true
@@ -603,10 +606,21 @@ func (extractor *pdfUnicodeTextExtractor) appendRaw(current *pdfUnicodeCMap, raw
 		return
 	}
 	decoded := current.Decode([]byte(raw))
-	extractor.out.WriteString(decoded)
-	if decoded != "" {
-		extractor.lineEnded = strings.HasSuffix(decoded, "\n")
+	if decoded == "" {
+		return
 	}
+	if extractor.pendingGap && !extractor.lineEnded && extractor.out.Len() > 0 {
+		first, _ := utf8.DecodeRuneInString(decoded)
+		// 中文逐字排版可用 TJ 移动字形。保留显式字符空格和其他文字的词距。
+		if !unicode.IsSpace(extractor.lastRune) && !unicode.IsSpace(first) &&
+			!(unicode.Is(unicode.Han, extractor.lastRune) && unicode.Is(unicode.Han, first)) {
+			extractor.out.WriteByte(' ')
+		}
+	}
+	extractor.pendingGap = false
+	extractor.out.WriteString(decoded)
+	extractor.lastRune, _ = utf8.DecodeLastRuneInString(decoded)
+	extractor.lineEnded = extractor.lastRune == '\n'
 }
 
 // extract 按绘制顺序解释一个页面或 Form 内容流；Form 自带 Resources 时
@@ -650,11 +664,11 @@ func (extractor *pdfUnicodeTextExtractor) extract(stream, resources pdf.Value, d
 				value := array.Index(index)
 				if value.Kind() == pdf.String {
 					extractor.appendRaw(current, value.RawString())
-				} else if value.Float64() < -120 && extractor.out.Len() > 0 {
-					extractor.out.WriteByte(' ')
-					extractor.lineEnded = false
+				} else if value.Float64() < -120 {
+					extractor.pendingGap = true
 				}
 			}
+			extractor.pendingGap = false
 		case "'", "\"":
 			extractor.lineBreak()
 			if len(arguments) > 0 {

@@ -256,8 +256,8 @@ func (p *popplerBackend) linesFor(pageIdx int64) []pdfLine {
 	return p.pages[pageIdx]
 }
 
-// tryPopplerFallback 对单页尝试 poppler 降级提取：仅当 pdftotext 可用、
-// 提取成功且（原行为空 或 poppler 结果乱码率明显更低）时返回降级行。
+// tryPopplerFallback 返回 Poppler 的单页坐标行。少量坏字仅在原页
+// 缺少坐标时尝试恢复，且备用结果须无坏字并保留可读字符数。
 // backend 提供文档级缓存（多页降级只执行一次 pdftotext）。
 func tryPopplerFallback(backend *popplerBackend, pageIdx int64, original []pdfLine) []pdfLine {
 	pl := backend.linesFor(pageIdx)
@@ -267,8 +267,15 @@ func tryPopplerFallback(backend *popplerBackend, pageIdx int64, original []pdfLi
 	if len(original) == 0 {
 		return pl
 	}
-	// 有原始行但乱码超限：poppler 结果乱码率更低才采用
-	if textGarbageRatio(joinPDFLineText(pl)) < textGarbageRatio(joinPDFLineText(original)) {
+	sourceText, popplerText := joinPDFLineText(original), joinPDFLineText(pl)
+	sourceRatio, popplerRatio := textGarbageRatio(sourceText), textGarbageRatio(popplerText)
+	if popplerRatio >= sourceRatio {
+		return nil
+	}
+	if sourceRatio > popplerFallbackGarbageThreshold ||
+		(original[0].Fallback && popplerRatio == 0 &&
+			pdfUnicodeReadableCount(pdfUnicodeNonSpace(popplerText), popplerRatio) >=
+				pdfUnicodeReadableCount(pdfUnicodeNonSpace(sourceText), sourceRatio)) {
 		return pl
 	}
 	return nil

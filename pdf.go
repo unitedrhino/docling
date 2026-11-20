@@ -354,13 +354,13 @@ func normalizePDFLinesGeometry(lines []pdfLine, geometry pdfPageGeometry) []pdfL
 func assemblePDFPageLines(page pdf.Page, pageIdx int64) []pdfLine {
 	content, contentOK := safePDFPageContent(page)
 	if contentOK && len(content.Text) > 0 {
-		return recoverPDFUnicodeLines(page, pageIdx, assemblePDFLines(content.Text, pageIdx))
+		return recoverPDFUnicodeLines(page, pageIdx, assemblePDFLines(content.Text, pageIdx), content.Text)
 	}
 	plain, plainOK := safePDFPagePlainText(page)
 	if !plainOK || strings.TrimSpace(plain) == "" {
-		return recoverPDFUnicodeLines(page, pageIdx, nil)
+		return recoverPDFUnicodeLines(page, pageIdx, nil, nil)
 	}
-	return recoverPDFUnicodeLines(page, pageIdx, []pdfLine{{Text: sanitizeText(plain), PageIdx: pageIdx, Fallback: true}})
+	return recoverPDFUnicodeLines(page, pageIdx, []pdfLine{{Text: sanitizeText(plain), PageIdx: pageIdx, Fallback: true}}, nil)
 }
 
 // safePDFPageContent 隔离第三方内容/CMap 解释器 panic；失败后由纯 Go
@@ -400,9 +400,18 @@ const pdfLineTolerance = 2.0
 //     对齐 docling.rs conformance 的 generated spaces 规则）。
 func assemblePDFLines(chars []pdf.Text, pageIdx int64) []pdfLine {
 	filtered := make([]pdf.Text, 0, len(chars))
+	painted := make(map[pdf.Text]struct{})
 	for _, c := range chars {
 		if strings.TrimSpace(c.S) == "" {
 			continue
+		}
+		// 同位置、同尺寸的重复绘制只产生一个可见字形。缺少字宽时，
+		// 提取器可能把顺序书写的字符放到同一坐标，保留这些字符。
+		if c.W > 0 {
+			if _, duplicate := painted[c]; duplicate {
+				continue
+			}
+			painted[c] = struct{}{}
 		}
 		filtered = append(filtered, c)
 	}
@@ -744,13 +753,37 @@ func medianLineFontSize(lines []pdfLine) float64 {
 	return sizes[len(sizes)/2]
 }
 
-// isPDFHeadingCandidate 判断行是否为标题候选：字号显著大于正文（≥1.5pt）
-// 且行长度受限。扫描件兜底行与无字号文档（bodySize=0）不参与判定。
+// isPDFHeadingCandidate 判断可读短行的字号是否显著大于正文（≥1.5pt）。
 func isPDFHeadingCandidate(line pdfLine, bodySize float64) bool {
-	if line.Fallback || bodySize <= 0 {
+	return bodySize > 0 && line.MaxFontSize-bodySize >= 1.5 &&
+		isPDFHeadingText(line, knowledgePDFHeadingMaxRunes)
+}
+
+// isPDFHeadingText 判断封面标题或章节标题是否具有可用文本。
+// 显式坏字、孤立非汉字和大量逐字断开的拉丁片段保留在正文中。
+func isPDFHeadingText(line pdfLine, maxRunes int) bool {
+	value := []rune(strings.TrimSpace(line.Text))
+	if line.Fallback || len(value) == 0 || len(value) > maxRunes ||
+		(len(value) == 1 && !isCJKCodepoint(value[0])) || textGarbageRatio(line.Text) > 0 {
 		return false
 	}
-	return line.MaxFontSize-bodySize >= 1.5 && len([]rune(line.Text)) <= knowledgePDFHeadingMaxRunes
+	var singleLetters, words int
+	for _, field := range strings.Fields(line.Text) {
+		letters := 0
+		for _, char := range field {
+			if unicode.In(char, unicode.Latin) {
+				letters++
+			} else if unicode.IsLetter(char) {
+				return true
+			}
+		}
+		if letters == 1 {
+			singleLetters++
+		} else if letters > 1 {
+			words++
+		}
+	}
+	return singleLetters < 4 || words > 1
 }
 
 // buildPDFElements 把全文档行分类为有序元素流：
@@ -823,7 +856,7 @@ func buildPDFElements(allLines []pdfLine) []pdfElement {
 			// 封面页其余大字行（版本号/日期等）降为普通正文，消除误判标题
 			elements = append(elements, pdfElement{line: l})
 		default:
-			if level, ok := sizeRank[l.MaxFontSize]; ok {
+			if level, ok := sizeRank[l.MaxFontSize]; ok && isPDFHeadingCandidate(l, bodySize) {
 				elements = append(elements, pdfElement{headingLevel: level, line: l})
 				continue
 			}
@@ -854,7 +887,7 @@ func findPDFCoverTitleIdx(allLines, statLines []pdfLine, homeLines int) int {
 		if l.PageIdx != 0 || l.Table != nil || l.Furniture != "" || l.InTOC {
 			continue
 		}
-		if l.MaxFontSize == maxSize && len([]rune(l.Text)) <= knowledgePDFCoverTitleMaxRunes {
+		if l.MaxFontSize == maxSize && isPDFHeadingText(l, knowledgePDFCoverTitleMaxRunes) {
 			return i
 		}
 	}

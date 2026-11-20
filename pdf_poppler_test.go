@@ -3,6 +3,28 @@ package docling
 
 import "testing"
 
+// TestPopplerFallbackForSparseReplacement 验证只在备用文本清除了少量坏字
+// 且保留了足量正文时，才替换原页。
+func TestPopplerFallbackForSparseReplacement(t *testing.T) {
+	original := []pdfLine{{Text: "这是一段带有一个未解码字形的中文正�，其余文字完整保留。", Fallback: true}}
+	clean := "这是一段带有一个未解码字形的中文正文，其余文字完整保留。"
+	backend := &popplerBackend{pages: map[int64][]pdfLine{
+		0: {{Text: clean}},
+		1: {{Text: "只有部分正文。"}},
+	}, ok: true}
+	backend.once.Do(func() {})
+	if got := tryPopplerFallback(backend, 0, original); len(got) != 1 || got[0].Text != clean {
+		t.Fatalf("完整恢复结果应进入文档：%v", got)
+	}
+	if got := tryPopplerFallback(backend, 1, original); got != nil {
+		t.Fatalf("缺少正文的恢复结果应被拒绝：%v", got)
+	}
+	original[0].Fallback = false
+	if got := tryPopplerFallback(backend, 0, original); got != nil {
+		t.Fatalf("有坐标的页面应保留既有版面：%v", got)
+	}
+}
+
 // TestParsePopplerPagesConvertsToBottomLeft 验证 Poppler XHTML 页高被用于将
 // TOPLEFT 行盒与词盒转换为统一 BOTTOMLEFT，并完整保留每个词的 bbox 与字号。
 func TestParsePopplerPagesConvertsToBottomLeft(t *testing.T) {
