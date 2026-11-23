@@ -51,6 +51,9 @@ const (
 	knowledgePDFFurnitureMinPages = 3
 	// knowledgePDFFurnitureMaxRunes 页眉/页脚行长上限：超长行不可能是页眉页脚。
 	knowledgePDFFurnitureMaxRunes = 100
+	// knowledgePDFFurnitureRunPages 邻接规则所需的最少连续页数：同一指纹出现
+	// 在 >=4 个连续页的顶部/底部区域且从未进入正文区时，判为页眉/页脚。
+	knowledgePDFFurnitureRunPages = 4
 	// knowledgePDFTOCMinRows 构成目录区域所需的最少目录行数。
 	knowledgePDFTOCMinRows = 3
 	// knowledgePDFCoverMaxHomeLines 首页行数不超过该值才视为封面页。
@@ -647,10 +650,12 @@ func classifyPDFFurnitureLines(lines []pdfLine, pageCount int) {
 		}
 		return false
 	}
-	// 指纹计数：归一化文本 → 出现过的页集合（页内取一次）
+	// 指纹计数：归一化文本 → 出现过的页集合；body 记录指纹在正文区（顶部/
+	// 底部区域之外）出现过的页，供邻接规则排除。
 	minPages := int(math.Ceil(float64(pageCount) * knowledgePDFFurnitureRepeatRatio))
 	seenTop := map[string]map[int64]bool{}
 	seenBottom := map[string]map[int64]bool{}
+	seenBody := map[string]map[int64]bool{}
 	for _, l := range lines {
 		if l.Fallback || len([]rune(l.Text)) > knowledgePDFFurnitureMaxRunes {
 			continue
@@ -659,18 +664,30 @@ func classifyPDFFurnitureLines(lines []pdfLine, pageCount int) {
 		if key == "" {
 			continue
 		}
-		if inTopZone(l) {
+		inTop, inBottom := inTopZone(l), inBottomZone(l)
+		if inTop {
 			if seenTop[key] == nil {
 				seenTop[key] = map[int64]bool{}
 			}
 			seenTop[key][l.PageIdx] = true
 		}
-		if inBottomZone(l) {
+		if inBottom {
 			if seenBottom[key] == nil {
 				seenBottom[key] = map[int64]bool{}
 			}
 			seenBottom[key][l.PageIdx] = true
 		}
+		if !inTop && !inBottom {
+			if seenBody[key] == nil {
+				seenBody[key] = map[int64]bool{}
+			}
+			seenBody[key][l.PageIdx] = true
+		}
+	}
+	// isChapterFurniture 邻接规则：同一指纹出现在 >=knowledgePDFFurnitureRunPages
+	// 个连续页且从未进入正文区。
+	isChapterFurniture := func(seen map[string]map[int64]bool, key string) bool {
+		return hasConsecutivePDFPages(seen[key], knowledgePDFFurnitureRunPages) && len(seenBody[key]) == 0
 	}
 	// 第二遍按行落点打标：同一文本也出现在正文区时不误标（页眉只认顶部区域行）
 	for i := range lines {
@@ -683,17 +700,50 @@ func classifyPDFFurnitureLines(lines []pdfLine, pageCount int) {
 			continue
 		}
 		switch {
-		case inTopZone(*l) && len(seenTop[key]) >= minPages:
+		case inTopZone(*l) && (len(seenTop[key]) >= minPages || isChapterFurniture(seenTop, key)):
 			l.Furniture = LabelPageHeader
-		case inBottomZone(*l) && len(seenBottom[key]) >= minPages:
+		case inBottomZone(*l) && (len(seenBottom[key]) >= minPages || isChapterFurniture(seenBottom, key)):
 			l.Furniture = LabelPageFooter
 		}
 	}
 }
 
+// hasConsecutivePDFPages 判断页集合中是否存在 >= n 个连续页（页号相邻）。
+func hasConsecutivePDFPages(pages map[int64]bool, n int) bool {
+	if len(pages) < n {
+		return false
+	}
+	keys := make([]int64, 0, len(pages))
+	for p := range pages {
+		keys = append(keys, p)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	run := 1
+	for i := 1; i < len(keys); i++ {
+		if keys[i] == keys[i-1]+1 {
+			run++
+			if run >= n {
+				return true
+			}
+		} else {
+			run = 1
+		}
+	}
+	return false
+}
+
 // pdfTOCLineRe 目录行形态：前缀文本（1-80 字）+ 连续点线（半角句点/全角句点/
 // 间隔号/省略号，>=4 个）+ 行尾页码（1-4 位数字）。
 var pdfTOCLineRe = regexp.MustCompile(`^(.{1,80}?[.．·…]{4,})\s*([0-9]{1,4})\s*$`)
+
+// pdfTOCDotSpaceRe 匹配"点+空格"的引导点序列。总点数 >=4 且点间距
+// <=3 个空白：编号里的点（"3.1.2"）后跟数字，不满足条件不会被折叠。
+var pdfTOCDotSpaceRe = regexp.MustCompile(`(?:[.．·…][ \t]{1,3}){3,}[.．·…]`)
+
+// foldPDFTOCDots 把空格分隔的引导点折叠为连续点，供 pdfTOCLineRe 统一匹配。
+func foldPDFTOCDots(text string) string {
+	return pdfTOCDotSpaceRe.ReplaceAllString(text, "....")
+}
 
 // annotatePDFTOCRegions 标记目录区域，结果写入行 InTOC 字段：
 // 连续 >=knowledgePDFTOCMinRows 行目录行（允许区域中间孤立夹入 1 行非目录行）
@@ -702,7 +752,7 @@ var pdfTOCLineRe = regexp.MustCompile(`^(.{1,80}?[.．·…]{4,})\s*([0-9]{1,4})
 func annotatePDFTOCRegions(lines []pdfLine) {
 	isTOC := make([]bool, len(lines))
 	for i, l := range lines {
-		isTOC[i] = l.Furniture == "" && pdfTOCLineRe.MatchString(l.Text)
+		isTOC[i] = l.Furniture == "" && pdfTOCLineRe.MatchString(foldPDFTOCDots(l.Text))
 	}
 	for i := 0; i < len(lines); {
 		if !isTOC[i] {
